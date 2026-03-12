@@ -1,0 +1,8 @@
+PyQt6>=6.6.0
+manga-ocr>=0.1.11
+edge-tts>=6.1.0
+mss>=9.0.0
+pygame>=2.5.0
+requests>=2.31.0
+keyboard>=0.13.5
+Pillow>=10.0.0
