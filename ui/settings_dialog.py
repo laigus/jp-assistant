@@ -1,20 +1,15 @@
-"""Settings dialog — model, OCR mode, prompt management in one panel."""
+"""Settings dialog — model selection and prompt management."""
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QTextEdit, QApplication, QSizePolicy, QComboBox, QTabWidget,
+    QTextEdit, QApplication, QSizePolicy, QComboBox, QSlider, QCheckBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPainter
 
 from ui.acrylic import enable_acrylic
 from ui.glass_base import paint_glass
+from ui.ui_config import UIConfig, THEMES
 from core.prompt_manager import PromptManager
-
-OCR_MODES = {
-    "basic": "仅 OCR（快速）",
-    "lines": "分行 + OCR（推荐）",
-    "correct": "OCR + 云端纠错（最准）",
-}
 
 
 class SettingsDialog(QWidget):
@@ -45,7 +40,7 @@ class SettingsDialog(QWidget):
         # title bar
         title_bar = QHBoxLayout()
         title_bar.setSpacing(6)
-        title = QLabel("⚙ 设置")
+        title = QLabel("⟐ 设置")
         title.setObjectName("titleLabel")
         title_bar.addWidget(title)
         title_bar.addStretch()
@@ -67,24 +62,51 @@ class SettingsDialog(QWidget):
         )
         layout.addWidget(self.model_combo)
 
-        # --- OCR mode section ---
-        ocr_label = QLabel("识别模式")
-        ocr_label.setObjectName("sectionLabel")
-        layout.addWidget(ocr_label)
+        # --- appearance section ---
+        appear_label = QLabel("外观")
+        appear_label.setObjectName("sectionLabel")
+        layout.addWidget(appear_label)
 
-        self.ocr_combo = QComboBox()
-        for key, desc in OCR_MODES.items():
-            self.ocr_combo.addItem(desc, key)
-        self.ocr_combo.setCurrentIndex(1)
-        layout.addWidget(self.ocr_combo)
+        # theme color
+        theme_row = QHBoxLayout()
+        theme_row.setSpacing(8)
+        theme_lbl = QLabel("主题")
+        theme_lbl.setFixedWidth(50)
+        theme_row.addWidget(theme_lbl)
+        self.theme_combo = QComboBox()
+        for key, data in THEMES.items():
+            self.theme_combo.addItem(data["name"], key)
+        cfg = UIConfig()
+        idx = list(THEMES.keys()).index(cfg.theme) if cfg.theme in THEMES else 0
+        self.theme_combo.setCurrentIndex(idx)
+        self.theme_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        theme_row.addWidget(self.theme_combo)
+        layout.addLayout(theme_row)
 
-        ocr_hint = QLabel(
-            "分行+OCR：自动按行切分截图再逐行识别，长文本推荐\n"
-            "OCR+云端纠错：先OCR再发截图给AI模型纠正错误"
+        # opacity slider
+        opacity_row = QHBoxLayout()
+        opacity_row.setSpacing(8)
+        opacity_lbl = QLabel("透明度")
+        opacity_lbl.setFixedWidth(50)
+        opacity_row.addWidget(opacity_lbl)
+        self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.opacity_slider.setRange(0, 100)
+        self.opacity_slider.setValue(cfg.opacity)
+        self.opacity_slider.setToolTip("0 = 全透明，100 = 不透明")
+        opacity_row.addWidget(self.opacity_slider)
+        self.opacity_value_label = QLabel(f"{cfg.opacity}%")
+        self.opacity_value_label.setFixedWidth(36)
+        opacity_row.addWidget(self.opacity_value_label)
+        self.opacity_slider.valueChanged.connect(
+            lambda v: self.opacity_value_label.setText(f"{v}%")
         )
-        ocr_hint.setObjectName("statusLabel")
-        ocr_hint.setWordWrap(True)
-        layout.addWidget(ocr_hint)
+        layout.addLayout(opacity_row)
+
+        # acrylic toggle
+        self.acrylic_check = QCheckBox("磨砂玻璃效果（Acrylic）")
+        self.acrylic_check.setChecked(cfg.acrylic_enabled)
+        self.acrylic_check.setToolTip("关闭后为纯透明，无背景模糊")
+        layout.addWidget(self.acrylic_check)
 
         # --- prompt section ---
         sp_label = QLabel("系统 Prompt（{text} 为待分析文本占位符）")
@@ -124,33 +146,30 @@ class SettingsDialog(QWidget):
     def current_model(self) -> str:
         return self.model_combo.currentText()
 
-    @property
-    def current_ocr_mode(self) -> str:
-        return self.ocr_combo.currentData()
-
     def set_models(self, models: list, default: str):
-        current = self.model_combo.currentText()
+        saved = UIConfig().selected_model
+        preferred = saved or default
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         if default not in models:
             self.model_combo.addItem(default)
         for m in models:
             self.model_combo.addItem(m)
-        idx = self.model_combo.findText(current or default)
+        idx = self.model_combo.findText(preferred)
         if idx >= 0:
             self.model_combo.setCurrentIndex(idx)
         else:
             self.model_combo.setCurrentIndex(0)
         self.model_combo.blockSignals(False)
 
-    def set_ocr_mode(self, mode: str):
-        for i in range(self.ocr_combo.count()):
-            if self.ocr_combo.itemData(i) == mode:
-                self.ocr_combo.setCurrentIndex(i)
-                break
-
     def show_dialog(self):
         self.prompt_edit.setPlainText(self.pm.system_prompt)
+        cfg = UIConfig()
+        self.opacity_slider.setValue(cfg.opacity)
+        self.opacity_value_label.setText(f"{cfg.opacity}%")
+        idx = list(THEMES.keys()).index(cfg.theme) if cfg.theme in THEMES else 0
+        self.theme_combo.setCurrentIndex(idx)
+        self.acrylic_check.setChecked(cfg.acrylic_enabled)
         if SettingsDialog._saved_pos is not None:
             self.move(SettingsDialog._saved_pos)
         else:
@@ -168,6 +187,12 @@ class SettingsDialog(QWidget):
     def _on_save(self):
         self.pm.system_prompt = self.prompt_edit.toPlainText()
         self.pm.save()
+        cfg = UIConfig()
+        cfg.opacity = self.opacity_slider.value()
+        cfg.theme = self.theme_combo.currentData()
+        cfg.acrylic_enabled = self.acrylic_check.isChecked()
+        cfg.selected_model = self.model_combo.currentText()
+        cfg.save()
         self.settings_changed.emit()
         self.close()
 
@@ -206,6 +231,9 @@ class SettingsDialog(QWidget):
         super().showEvent(event)
         if not self._acrylic_applied:
             hwnd = int(self.winId())
-            self._acrylic_applied = enable_acrylic(hwnd, tint_color=0x18080810)
+            _cfg = UIConfig()
+            self._acrylic_applied = enable_acrylic(
+                hwnd, tint_color=_cfg.acrylic_tint(), dark_mode=not _cfg.is_light
+            )
             if self._acrylic_applied:
                 self.update()

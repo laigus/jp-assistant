@@ -1,5 +1,5 @@
 """Full-screen overlay for region selection (screenshot capture)."""
-from PyQt6.QtWidgets import QWidget, QApplication
+from PyQt6.QtWidgets import QWidget
 from PyQt6.QtCore import Qt, QRect, QPoint, pyqtSignal
 from PyQt6.QtGui import QPainter, QColor, QCursor, QPen, QGuiApplication
 import mss

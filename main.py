@@ -1,8 +1,8 @@
 """JP Assistant - Japanese Game Learning Assistant
 Floating frosted-glass panel: Screenshot → OCR → Translate + Grammar → TTS
 """
-# torch must be imported before PyQt6 to avoid DLL conflicts on Windows
-import torch  # noqa: F401
+# onnxruntime must be imported before PyQt6 to avoid DLL conflicts on Windows
+import onnxruntime  # noqa: F401
 
 import sys
 import os

@@ -7,39 +7,118 @@ alwaysApply: true
 
 桌面端日语学习助手：截图 OCR → 翻译 + 语法解析 → 语音朗读。浮动磨砂玻璃面板。
 
-## 技术栈
+## 技术栈概览
 
 | 模块 | 方案 |
 |------|------|
-| UI | Python + PyQt6（无边框、Acrylic 磨砂、置顶） |
-| OCR | manga-ocr（日语游戏/漫画专用） |
+| UI | Python + PyQt6（无边框、Acrylic 磨砂、置顶、多主题、透明度可调） |
+| OCR | **meikiocr**（ONNX，专为日语游戏文字训练） |
 | 翻译+语法 | Ollama API（默认 deepseek-v3.1:671b-cloud） |
-| TTS | edge-tts + Qt QMediaPlayer |
-| 音效 | Qt QSoundEffect（程序化生成 WAV） |
-| Markdown | markdown 库转 HTML，QTextBrowser 渲染 |
+| TTS | edge-tts（微软 Edge 在线神经网络语音合成） |
+| 音效 | Qt QSoundEffect（Mixkit 免版权真实录音 WAV） |
+| Markdown | markdown 库转 HTML（支持字号缩放），QTextBrowser 渲染 |
 | 截图 | mss + PyQt 全屏选区覆盖层 |
-| 热键 | keyboard 库（Ctrl+Shift+J） |
+| 热键 | keyboard 库（Ctrl+Alt+S 全局热键） |
+
+## 技术栈详解
+
+### OCR — meikiocr（文字识别）
+
+`meikiocr` 是专为日语游戏文字训练的 OCR 库，基于 ONNX Runtime。
+
+- **底层模型**：两阶段流水线 — 文字检测（D-FINE 目标检测器）+ 文字识别（MobileNetV4 CNN）
+- **模型**：`rtr46/meiki.text.detect.v0`（~14MB）+ `rtr46/meiki.txt.recognition.v0`（~30MB）
+- **特点**：速度快（ONNX 推理，CPU/GPU 均可）、体积小、专为游戏渲染文字优化
+- **输入格式**：OpenCV BGR numpy array，代码中从 PIL Image 转换
+- **架构限制**：最多检测 64 个文本框，每行最多 48 字符；不支持竖排文字
+- **完全本地运行**，模型从 HuggingFace 下载
+
+> **备选方案 manga-ocr**：基于 PyTorch + Transformers 的漫画专用 OCR，模型 ~444MB。
+> 擅长漫画气泡/短文本，但依赖 PyTorch (~443MB)，长文本准确率低。已移除以节省 ~900MB 空间。
+> 如需恢复：`pip install manga-ocr`，修改 `core/ocr.py` 添加 MangaOcr 引擎。
+
+### TTS — edge-tts（语音合成）
+
+`edge-tts` 是一个 Python 库，调用微软 Edge 浏览器的在线 TTS 服务。
+
+- **底层技术**：Azure Cognitive Services 神经网络语音合成
+- **通信方式**：通过 WebSocket 连接 `speech.platform.bing.com`
+- **使用声音**：`ja-JP-NanamiNeural`（日语女声"七海"）
+- **流程**：发送文本 → 微软服务器合成 → 返回 MP3 流 → 保存临时文件 → Qt QMediaPlayer 播放
+- **特点**：免费、无需 API Key，但需要网络连接
+
+### 翻译与语法解析 — Ollama + LLM
+
+通过 HTTP API 调用本地 Ollama 服务。
+
+- **Ollama**：本地 LLM 运行器，在 `localhost:11434` 提供 REST API
+- **默认模型**：`deepseek-v3.1:671b-cloud`（云端代理模型，速度快质量好）
+- **通信**：`requests` 库 POST 到 `/api/chat`，streaming 模式逐段实时返回
+- **Prompt 管理**：`PromptManager` 管理系统 Prompt + 临时 Prompt，持久化到 `data/prompts.json`
+- **关键细节**：streaming response 必须在 finally 中 close()，否则第二次请求挂起
+
+### 桌面 UI — PyQt6
+
+- 无边框窗口 + 透明背景 + 置顶
+- **多主题支持**：暗黑、深蓝、纯白、浅蓝四种主题，切换时实时更新所有窗口（样式/图标/HTML 内容/Acrylic 效果）
+- **透明度可调**：0-100% 滑块控制，0% 时近乎全透明，影响所有组件背景 alpha
+- **Acrylic 开关**：可关闭磨砂模糊效果，保留纯透明 + 圆角阴影
+- **SVG 图标**：自定义 SVG 路径渲染，颜色随主题自适应
+- `QThread` 子线程执行 OCR/分析/TTS，完成后自动清理避免内存泄漏
+- `QTextBrowser` 显示 Markdown 渲染后的 HTML，详情窗口支持 Ctrl+滚轮缩放
+- `QSoundEffect` 播放按钮音效，`QMediaPlayer` 播放 TTS
+- **窗口位置记忆**：主窗口和弹窗位置在关闭时保存，下次启动恢复
+
+### 磨砂玻璃 — Windows DWM API
+
+通过 `ctypes` 直接调用 Windows 系统 DLL：
+
+- **`user32.dll`** → `SetWindowCompositionAttribute`：启用 Acrylic 亚克力磨砂模糊
+- **`dwmapi.dll`** → `DwmSetWindowAttribute`：Win11 原生圆角 + 暗色模式阴影
+- **`dwmapi.dll`** → `DwmExtendFrameIntoClientArea`：启用 DWM 窗口投影阴影
+
+### 其他库
+
+| 库 | 作用 |
+|---|---|
+| `mss` | 截图库，调用系统 API 抓取屏幕指定区域 |
+| `keyboard` | 注册全局快捷键（Ctrl+Alt+S），后台也能响应 |
+| `Pillow` | 图片处理（PIL），截图 → OCR 格式转换 |
+| `numpy` | 数组运算，PIL Image ↔ OpenCV BGR 转换 |
+| `markdown` | Markdown → HTML 转换（tables/sane_lists 扩展） |
+| `requests` | HTTP 客户端，与 Ollama API 通信 |
+
+### 数据流
+
+```
+截图(mss) → 图片(PIL) → BGR array(numpy) → 文字识别(meikiocr ONNX)
+→ 翻译解析(Ollama + deepseek 云端模型) → 渲染显示(PyQt6 + markdown)
+→ 语音朗读(edge-tts 微软云端合成 → QMediaPlayer 播放)
+```
 
 ## 项目结构
 
 ```
 jp-assistant/
-├── main.py              # 入口（torch 必须先于 PyQt6 导入避免 DLL 冲突）
+├── main.py              # 入口
 ├── ui/
 │   ├── main_window.py   # 主窗口 + 所有 UI 逻辑 + worker 线程
-│   ├── screenshot.py    # 截图全屏选区
-│   ├── acrylic.py       # Windows Acrylic 磨砂玻璃 API（ctypes）
-│   ├── styles.py        # QSS 样式表 + 字体定义
-│   ├── md_render.py     # Markdown → styled HTML 转换
-│   ├── result_window.py # 解析结果弹窗（大窗口查看）
-│   └── prompt_dialog.py # Prompt 管理对话框
+│   ├── screenshot.py    # 截图全屏选区（ESC/右键取消）
+│   ├── acrylic.py       # Windows Acrylic 磨砂 + DWM 圆角阴影（ctypes）
+│   ├── glass_base.py    # 共享玻璃绘制工具函数
+│   ├── styles.py        # QSS 样式表（动态生成，支持深浅主题 + 透明度）
+│   ├── md_render.py     # Markdown → styled HTML 转换（支持字号缩放）
+│   ├── result_window.py # 解析结果弹窗（大窗口查看，Ctrl+滚轮缩放）
+│   ├── settings_dialog.py # 设置面板（模型/Prompt/主题/透明度/Acrylic）
+│   ├── ui_config.py     # UI 配置单例（主题/透明度/Acrylic/窗口位置持久化）
+│   └── icons.py         # SVG 图标渲染（主题自适应颜色）
 ├── core/
-│   ├── ocr.py           # manga-ocr 封装（HF 镜像加速）
+│   ├── ocr.py           # meikiocr 封装
 │   ├── translator.py    # Ollama 翻译 + 语法解析（streaming）
 │   ├── prompt_manager.py# Prompt 存储/加载/临时 prompt
 │   └── tts.py           # edge-tts 语音合成
 ├── assets/
-│   ├── sounds/          # 生成的 WAV 音效
+│   ├── sounds/          # Mixkit 免版权 WAV 音效
 │   └── generate_sounds.py
 ├── data/                # 运行时数据（prompts.json 等）
 └── requirements.txt
@@ -47,15 +126,16 @@ jp-assistant/
 
 ## 关键设计决策
 
-1. **torch 优先导入** — main.py 中 `import torch` 必须在 PyQt6 之前，否则 Windows DLL 冲突
-2. **所有音频用 Qt 原生** — QSoundEffect（SFX）+ QMediaPlayer（TTS），避免 pygame 崩溃
-3. **OCR 用 HF 镜像** — `HF_ENDPOINT=https://hf-mirror.com`，国内加速模型下载
-4. **Streaming 解析** — Ollama streaming 实时输出，每次 callback 重渲染 Markdown HTML
-5. **PromptManager** — system prompt 持久化到 data/prompts.json，支持 `{text}` 占位符和临时 prompt
-6. **弹窗复用** — ResultWindow 和 PromptDialog 创建后复用，不重复创建
-7. **始终绘制背景** — paintEvent 中即使 acrylic 生效也要绘制低 alpha 填充，否则窗口点击穿透
-8. **response.close()** — Ollama streaming response 在 finally 中关闭，防止第二次请求挂起
-9. **窗口拖动** — 通过 mousePressEvent 检测 y < TITLE_BAR_HEIGHT 实现标题栏拖动
+1. **所有音频用 Qt 原生** — QSoundEffect（SFX）+ QMediaPlayer（TTS），避免 pygame 崩溃
+2. **meikiocr ONNX 推理** — 不依赖 PyTorch，安装轻量（~40MB vs ~900MB），游戏文字准确率更高
+3. **Streaming 解析** — Ollama streaming 实时输出，每次 callback 重渲染 Markdown HTML
+4. **PromptManager** — system prompt 持久化到 data/prompts.json，支持 `{text}` 占位符和临时 prompt
+5. **弹窗复用** — ResultWindow 和 SettingsDialog 创建后复用，不重复创建；位置/缩放/模型选择均持久化到 ui_config.json
+6. **始终绘制背景** — paintEvent 中即使 acrylic 生效也要绘制低 alpha 填充，否则窗口点击穿透
+7. **response.close()** — Ollama streaming response 在 finally 中关闭，防止第二次请求挂起
+8. **窗口拖动** — 通过 mousePressEvent 检测 y < 44px 实现标题栏拖动
+9. **Worker 自动清理** — `_start_worker()` 在 finished 信号中自动 remove + deleteLater，防止内存泄漏
+10. **主题切换全链路** — 切换主题时重新渲染 HTML 内容、刷新图标颜色、重新应用 Acrylic 效果
 
 ## 虚拟环境
 

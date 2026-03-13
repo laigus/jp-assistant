@@ -6,25 +6,39 @@ alwaysApply: true
 # TODO / Roadmap
 
 ## 已完成
-- [x] 截图 OCR 识别（manga-ocr + HF 镜像）
+- [x] 截图 OCR 识别（manga-ocr → meikiocr 替换）
 - [x] Ollama 翻译 + 语法解析（streaming）
 - [x] edge-tts 语音朗读（Qt QMediaPlayer）
-- [x] 无边框磨砂玻璃面板（Acrylic）
-- [x] 玻璃音效
-- [x] 全局快捷键 Ctrl+Shift+J
+- [x] 无边框磨砂玻璃面板（Acrylic + Win11 原生圆角阴影）
+- [x] Mixkit 真实录音音效
+- [x] 全局快捷键 Ctrl+Alt+S（右键/ESC 取消截图）
 - [x] OCR 文本可编辑后重新解析
 - [x] Markdown 格式化渲染解析结果
-- [x] 模型选择（下拉框，默认 deepseek-v3.1:671b-cloud）
+- [x] 模型选择（设置面板，默认 deepseek-v3.1:671b-cloud）
 - [x] Prompt 管理（编辑系统 prompt + 临时 prompt）
 - [x] 字体优化（Yu Gothic UI / Meiryo / Microsoft YaHei UI）
-- [x] 解析结果弹窗展开
+- [x] 解析结果弹窗展开（支持 Ctrl+滚轮/按钮缩放，记忆缩放比例）
+- [x] 深色磨砂玻璃主题 UI
+- [x] 设置面板集中管理（模型 + Prompt + 外观）
+- [x] OCR 引擎从 manga-ocr 切换为 meikiocr（节省 ~900MB 依赖空间）
+- [x] 多主题支持（暗黑、深蓝、纯白、浅蓝）
+- [x] 透明度可调（0-100% 滑块）
+- [x] Acrylic 磨砂开关
+- [x] SVG 主题自适应图标
+- [x] 切换主题全链路刷新（样式/图标/HTML/Acrylic）
+- [x] 主窗口位置记忆（关闭时保存，启动时恢复）
+- [x] 详情窗口位置/缩放持久化（跨重启保持）
+- [x] 模型选择持久化 + 云端模型列表自动获取（sorted）
+- [x] Worker 线程自动清理（防止内存泄漏）
+- [x] 无用导入清理
 
 ## 待做
-- [ ] 分行 OCR 优化：当前二值化阈值(200)只适合白底黑字，需自动检测背景深浅适配游戏截图（深色底+浅色字）
-- [ ] OCR+云端纠错优化：deepseek 是纯文本模型不支持图片，改为纯文本纠错（利用上下文推断修正）或使用 VLM 模型
-- [ ] 界面美化（布局细节调整）
+- [ ] 竖排文字支持（meikiocr 目前仅支持横排）
 
 ## 已知问题与修复记录
 - Acrylic 生效后必须仍绘制低 alpha 背景，否则 WA_TranslucentBackground 导致点击穿透
 - Ollama streaming response 必须在 finally 中 close()，否则第二次请求挂起
 - 弹窗关闭后需重置 _acrylic_applied=False，下次打开重新应用效果
+- HTML 内嵌 CSS 不随 QSS 更新，切换主题后必须重新渲染 md_to_html
+- 浅色主题 QTextEdit 背景 alpha 需 ≥200 确保光标可见
+- QTextBrowser.zoomIn/Out 无法覆盖 HTML CSS 固定 px 字号，需用 font_scale 重渲染

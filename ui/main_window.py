@@ -5,13 +5,15 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit,
     QLabel, QApplication, QSizePolicy, QTextBrowser,
 )
-from PyQt6.QtCore import Qt, QPoint, pyqtSignal, QThread, pyqtSlot, QRectF, QUrl
-from PyQt6.QtGui import QColor, QPainter, QPainterPath, QLinearGradient, QPen
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, pyqtSlot, QUrl
+from PyQt6.QtGui import QPainter
 from PyQt6.QtMultimedia import QSoundEffect, QMediaPlayer, QAudioOutput
 
-from ui.styles import MAIN_STYLE
-from ui.acrylic import enable_acrylic
+from ui.styles import build_style
+from ui.acrylic import enable_acrylic, disable_acrylic
 from ui.glass_base import paint_glass
+from ui.ui_config import UIConfig
+from ui.icons import icon, icon_color_hex
 from ui.screenshot import ScreenshotOverlay
 from ui.md_render import md_to_html
 from ui.result_window import ResultWindow
@@ -19,7 +21,7 @@ from ui.settings_dialog import SettingsDialog
 from core.translator import GrammarAnalyzer
 from core.prompt_manager import PromptManager
 from core.tts import TextToSpeech
-from core.ocr import OCR_MODE_BASIC, OCR_MODE_LINES, OCR_MODE_CORRECT
+
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOUNDS_DIR = os.path.join(BASE_DIR, "assets", "sounds")
@@ -30,25 +32,14 @@ class OcrWorker(QThread):
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
 
-    def __init__(self, ocr_engine, image, mode: str = OCR_MODE_BASIC,
-                 model: str = "", base_url: str = ""):
+    def __init__(self, ocr_engine, image):
         super().__init__()
         self.ocr_engine = ocr_engine
         self.image = image
-        self.mode = mode
-        self.model = model
-        self.base_url = base_url
 
     def run(self):
         try:
-            if self.mode == OCR_MODE_LINES:
-                text = self.ocr_engine.recognize_lines(self.image)
-            elif self.mode == OCR_MODE_CORRECT:
-                text = self.ocr_engine.recognize_with_correction(
-                    self.image, model=self.model, base_url=self.base_url
-                )
-            else:
-                text = self.ocr_engine.recognize(self.image)
+            text = self.ocr_engine.recognize(self.image)
             self.finished.emit(text)
         except Exception as e:
             self.error.emit(str(e))
@@ -92,8 +83,12 @@ class ModelListWorker(QThread):
         self.analyzer = analyzer
 
     def run(self):
-        models = self.analyzer.list_models()
-        self.finished.emit(models)
+        local = self.analyzer.list_models()
+        cloud = GrammarAnalyzer.list_cloud_models()
+        local_set = set(local)
+        cloud_only = sorted(m for m in cloud if m not in local_set)
+        merged = sorted(local) + cloud_only
+        self.finished.emit(merged)
 
 
 class MainWindow(QWidget):
@@ -104,16 +99,16 @@ class MainWindow(QWidget):
     def __init__(self, ocr_engine=None):
         super().__init__()
         self.ocr_engine = ocr_engine
-        self.analyzer = GrammarAnalyzer()
+        saved_model = UIConfig().selected_model
+        self.analyzer = GrammarAnalyzer(model=saved_model or self.DEFAULT_MODEL)
         self.tts = TextToSpeech()
         self.prompt_mgr = PromptManager(DATA_DIR)
         self.screenshot_overlay = ScreenshotOverlay()
 
         self._drag_pos = None
-        self._workers = []
+        self._workers: list[QThread] = []
         self._acrylic_applied = False
         self._last_md = ""
-        self._ocr_mode = OCR_MODE_LINES
         self._last_image = None
 
         self._init_audio()
@@ -157,7 +152,8 @@ class MainWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumSize(420, 380)
         self.resize(460, 660)
-        self.setStyleSheet(MAIN_STYLE)
+        _cfg = UIConfig()
+        self.setStyleSheet(build_style(_cfg.opacity, _cfg.is_light))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 14, 18, 18)
@@ -167,7 +163,8 @@ class MainWindow(QWidget):
         title_bar = QHBoxLayout()
         title_bar.setSpacing(6)
 
-        title = QLabel("✦ 日语助手")
+        _ic = icon_color_hex(UIConfig().is_light)
+        title = QLabel("日语助手")
         title.setObjectName("titleLabel")
         title_bar.addWidget(title)
         title_bar.addStretch()
@@ -176,28 +173,32 @@ class MainWindow(QWidget):
         self.status_label.setObjectName("statusLabel")
         title_bar.addWidget(self.status_label)
 
-        settings_btn = QPushButton("⚙")
-        settings_btn.setObjectName("iconBtn")
-        settings_btn.setToolTip("设置（模型/识别/Prompt）")
-        settings_btn.clicked.connect(self._on_settings_click)
-        title_bar.addWidget(settings_btn)
+        self._settings_btn = QPushButton()
+        self._settings_btn.setIcon(icon("settings", 16, _ic))
+        self._settings_btn.setObjectName("iconBtn")
+        self._settings_btn.setToolTip("设置（模型/Prompt/外观）")
+        self._settings_btn.clicked.connect(self._on_settings_click)
+        title_bar.addWidget(self._settings_btn)
 
-        min_btn = QPushButton("─")
-        min_btn.setObjectName("minBtn")
-        min_btn.setToolTip("最小化")
-        min_btn.clicked.connect(self.showMinimized)
-        title_bar.addWidget(min_btn)
+        self._min_btn = QPushButton()
+        self._min_btn.setIcon(icon("minimize", 16, _ic))
+        self._min_btn.setObjectName("minBtn")
+        self._min_btn.setToolTip("最小化")
+        self._min_btn.clicked.connect(self.showMinimized)
+        title_bar.addWidget(self._min_btn)
 
-        close_btn = QPushButton("✕")
-        close_btn.setObjectName("closeBtn")
-        close_btn.setToolTip("关闭")
-        close_btn.clicked.connect(self.close)
-        title_bar.addWidget(close_btn)
+        self._close_btn = QPushButton()
+        self._close_btn.setIcon(icon("close", 16, _ic))
+        self._close_btn.setObjectName("closeBtn")
+        self._close_btn.setToolTip("关闭")
+        self._close_btn.clicked.connect(self.close)
+        title_bar.addWidget(self._close_btn)
 
         layout.addLayout(title_bar)
 
         # ── capture button ──
-        self.capture_btn = QPushButton("📷  截图识别  (Ctrl+Alt+S)")
+        self.capture_btn = QPushButton("  截图识别  Ctrl+Alt+S")
+        self.capture_btn.setIcon(icon("capture", 18, _ic))
         self.capture_btn.setObjectName("captureBtn")
         self.capture_btn.clicked.connect(self._on_capture_click)
         layout.addWidget(self.capture_btn)
@@ -228,15 +229,18 @@ class MainWindow(QWidget):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
 
-        self.analyze_btn = QPushButton("🔍 解析")
+        self.analyze_btn = QPushButton(" 解析")
+        self.analyze_btn.setIcon(icon("analyze", 16, _ic))
         self.analyze_btn.clicked.connect(self._on_analyze_click)
         btn_row.addWidget(self.analyze_btn)
 
-        self.speak_btn = QPushButton("🔊 朗读")
+        self.speak_btn = QPushButton(" 朗读")
+        self.speak_btn.setIcon(icon("speak", 16, _ic))
         self.speak_btn.clicked.connect(self._on_speak_click)
         btn_row.addWidget(self.speak_btn)
 
-        self.expand_btn = QPushButton("⤢")
+        self.expand_btn = QPushButton()
+        self.expand_btn.setIcon(icon("expand", 16, _ic))
         self.expand_btn.setObjectName("iconBtn")
         self.expand_btn.setToolTip("展开查看详细结果")
         self.expand_btn.clicked.connect(self._on_expand_click)
@@ -261,8 +265,23 @@ class MainWindow(QWidget):
         self._settings_dialog = None
 
         # ── position ──
-        screen = QApplication.primaryScreen().geometry()
-        self.move(screen.width() - self.width() - 20, 50)
+        cfg = UIConfig()
+        if cfg.window_pos:
+            self.move(cfg.window_pos[0], cfg.window_pos[1])
+        else:
+            screen = QApplication.primaryScreen().geometry()
+            self.move(screen.width() - self.width() - 20, 50)
+
+    def _start_worker(self, worker: QThread):
+        """Register a worker, start it, and schedule cleanup on finish."""
+        self._workers.append(worker)
+        worker.finished.connect(lambda: self._cleanup_worker(worker))
+        worker.start()
+
+    def _cleanup_worker(self, worker: QThread):
+        if worker in self._workers:
+            self._workers.remove(worker)
+        worker.deleteLater()
 
     def _connect_signals(self):
         self.screenshot_overlay.region_captured.connect(self._on_region_captured)
@@ -272,8 +291,7 @@ class MainWindow(QWidget):
     def _load_models_async(self):
         worker = ModelListWorker(self.analyzer)
         worker.finished.connect(self._on_models_loaded)
-        self._workers.append(worker)
-        worker.start()
+        self._start_worker(worker)
 
     @pyqtSlot(list)
     def _on_models_loaded(self, models: list):
@@ -285,8 +303,42 @@ class MainWindow(QWidget):
         if self._settings_dialog:
             model = self._settings_dialog.current_model
             self.analyzer.model = model
-            self._ocr_mode = self._settings_dialog.current_ocr_mode
             self.status_label.setText(f"模型: {model[:25]}")
+        self._reapply_appearance()
+
+    def _reapply_appearance(self):
+        """Re-apply acrylic tint, stylesheet, icons, and repaint."""
+        cfg = UIConfig()
+        style = build_style(cfg.opacity, cfg.is_light)
+        self.setStyleSheet(style)
+        hwnd = int(self.winId())
+        dark = not cfg.is_light
+        if cfg.acrylic_enabled:
+            self._acrylic_applied = enable_acrylic(
+                hwnd, tint_color=cfg.acrylic_tint(), dark_mode=dark
+            )
+        else:
+            disable_acrylic(hwnd, dark_mode=dark)
+            self._acrylic_applied = False
+        _ic = icon_color_hex(cfg.is_light)
+        self._settings_btn.setIcon(icon("settings", 16, _ic))
+        self._min_btn.setIcon(icon("minimize", 16, _ic))
+        self._close_btn.setIcon(icon("close", 16, _ic))
+        self.capture_btn.setIcon(icon("capture", 18, _ic))
+        self.analyze_btn.setIcon(icon("analyze", 16, _ic))
+        self.speak_btn.setIcon(icon("speak", 16, _ic))
+        self.expand_btn.setIcon(icon("expand", 16, _ic))
+        if self._last_md:
+            html = md_to_html(self._last_md)
+            self.analysis_browser.setHtml(html)
+        self.update()
+        if self._settings_dialog:
+            self._settings_dialog.setStyleSheet(style)
+        if self._result_window:
+            self._result_window.setStyleSheet(style)
+            self._result_window.refresh_theme()
+            if hasattr(self._result_window, '_md_text') and self._result_window._md_text:
+                self._result_window.set_content(self._result_window._md_text)
 
     # ── painting ──
 
@@ -316,9 +368,15 @@ class MainWindow(QWidget):
         super().showEvent(event)
         if not self._acrylic_applied:
             hwnd = int(self.winId())
-            self._acrylic_applied = enable_acrylic(hwnd, tint_color=0x18080810)
-            if self._acrylic_applied:
-                self.update()
+            _cfg = UIConfig()
+            if _cfg.acrylic_enabled:
+                self._acrylic_applied = enable_acrylic(
+                    hwnd, tint_color=_cfg.acrylic_tint(), dark_mode=not _cfg.is_light
+                )
+            else:
+                disable_acrylic(hwnd, dark_mode=not _cfg.is_light)
+                self._acrylic_applied = False
+            self.update()
 
     # ── actions ──
 
@@ -330,19 +388,12 @@ class MainWindow(QWidget):
     def _on_region_captured(self, image):
         self._play_sound("capture")
         self._last_image = image
-        mode_label = {"basic": "OCR", "lines": "分行OCR", "correct": "OCR+纠错"}
-        self.status_label.setText(f"正在识别（{mode_label.get(self._ocr_mode, 'OCR')}）...")
+        self.status_label.setText("正在识别...")
         if self.ocr_engine:
-            worker = OcrWorker(
-                self.ocr_engine, image,
-                mode=self._ocr_mode,
-                model=self.analyzer.model,
-                base_url=self.analyzer.base_url,
-            )
+            worker = OcrWorker(self.ocr_engine, image)
             worker.finished.connect(self._on_ocr_done)
             worker.error.connect(self._on_ocr_error)
-            self._workers.append(worker)
-            worker.start()
+            self._start_worker(worker)
         else:
             self.status_label.setText("OCR 引擎未就绪")
 
@@ -377,8 +428,7 @@ class MainWindow(QWidget):
         worker = AnalyzeWorker(self.analyzer, prompt)
         worker.progress.connect(self._on_analysis_progress)
         worker.finished.connect(self._on_analysis_done)
-        self._workers.append(worker)
-        worker.start()
+        self._start_worker(worker)
 
     @pyqtSlot(str)
     def _on_analysis_progress(self, text):
@@ -409,8 +459,7 @@ class MainWindow(QWidget):
 
         worker = TtsWorker(self.tts, text)
         worker.finished.connect(self._on_tts_done)
-        self._workers.append(worker)
-        worker.start()
+        self._start_worker(worker)
 
     @pyqtSlot(str)
     def _on_tts_done(self, filepath):
@@ -432,13 +481,13 @@ class MainWindow(QWidget):
         self._play_sound("click")
         if self._settings_dialog is None:
             self._settings_dialog = SettingsDialog(self.prompt_mgr)
-            self._settings_dialog.setStyleSheet(MAIN_STYLE)
+            _c = UIConfig()
+            self._settings_dialog.setStyleSheet(build_style(_c.opacity, _c.is_light))
             self._settings_dialog.settings_changed.connect(self._on_settings_changed)
             if hasattr(self, '_models_cache'):
                 self._settings_dialog.set_models(self._models_cache, self.DEFAULT_MODEL)
             else:
                 self._settings_dialog.set_models([], self.DEFAULT_MODEL)
-            self._settings_dialog.set_ocr_mode(self._ocr_mode)
         self._settings_dialog.show_dialog()
 
     def _on_expand_click(self):
@@ -448,12 +497,15 @@ class MainWindow(QWidget):
         self._play_sound("click")
         if self._result_window is None:
             self._result_window = ResultWindow()
-            self._result_window.setStyleSheet(MAIN_STYLE)
-        html = md_to_html(self._last_md, large=True)
-        self._result_window.set_html(html)
+            _c = UIConfig()
+            self._result_window.setStyleSheet(build_style(_c.opacity, _c.is_light))
+        self._result_window.set_content(self._last_md)
         self._result_window.show_at_saved_pos()
 
     def closeEvent(self, event):
+        cfg = UIConfig()
+        cfg.window_pos = (self.x(), self.y())
+        cfg.save()
         self.tts.cleanup()
         if self._result_window:
             self._result_window.close()

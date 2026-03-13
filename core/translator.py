@@ -64,11 +64,23 @@ class GrammarAnalyzer:
                 resp.close()
 
     def list_models(self) -> list[str]:
-        """Fetch available model names from Ollama."""
+        """Fetch local model names from Ollama."""
         try:
             resp = self._session.get(f"{self.base_url}/api/tags", timeout=5)
             if resp.status_code == 200:
                 return [m["name"] for m in resp.json().get("models", [])]
+        except Exception:
+            pass
+        return []
+
+    @staticmethod
+    def list_cloud_models() -> list[str]:
+        """Fetch available cloud model names from Ollama registry."""
+        try:
+            resp = requests.get("https://ollama.com/api/tags", timeout=10)
+            if resp.status_code == 200:
+                names = [m["name"] for m in resp.json().get("models", [])]
+                return [f"{n}-cloud" if not n.endswith("-cloud") else n for n in names]
         except Exception:
             pass
         return []

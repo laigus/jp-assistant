@@ -1,5 +1,5 @@
 PyQt6>=6.6.0
-manga-ocr>=0.1.11
+meikiocr>=0.3.0
 edge-tts>=6.1.0
 mss>=9.0.0
 requests>=2.31.0
