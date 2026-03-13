@@ -1,0 +1,66 @@
+---
+description: 日语助手项目架构、技术栈和开发上下文
+alwaysApply: true
+---
+
+# JP Assistant - 项目概览
+
+桌面端日语学习助手：截图 OCR → 翻译 + 语法解析 → 语音朗读。浮动磨砂玻璃面板。
+
+## 技术栈
+
+| 模块 | 方案 |
+|------|------|
+| UI | Python + PyQt6（无边框、Acrylic 磨砂、置顶） |
+| OCR | manga-ocr（日语游戏/漫画专用） |
+| 翻译+语法 | Ollama API（默认 deepseek-v3.1:671b-cloud） |
+| TTS | edge-tts + Qt QMediaPlayer |
+| 音效 | Qt QSoundEffect（程序化生成 WAV） |
+| Markdown | markdown 库转 HTML，QTextBrowser 渲染 |
+| 截图 | mss + PyQt 全屏选区覆盖层 |
+| 热键 | keyboard 库（Ctrl+Shift+J） |
+
+## 项目结构
+
+```
+jp-assistant/
+├── main.py              # 入口（torch 必须先于 PyQt6 导入避免 DLL 冲突）
+├── ui/
+│   ├── main_window.py   # 主窗口 + 所有 UI 逻辑 + worker 线程
+│   ├── screenshot.py    # 截图全屏选区
+│   ├── acrylic.py       # Windows Acrylic 磨砂玻璃 API（ctypes）
+│   ├── styles.py        # QSS 样式表 + 字体定义
+│   ├── md_render.py     # Markdown → styled HTML 转换
+│   ├── result_window.py # 解析结果弹窗（大窗口查看）
+│   └── prompt_dialog.py # Prompt 管理对话框
+├── core/
+│   ├── ocr.py           # manga-ocr 封装（HF 镜像加速）
+│   ├── translator.py    # Ollama 翻译 + 语法解析（streaming）
+│   ├── prompt_manager.py# Prompt 存储/加载/临时 prompt
+│   └── tts.py           # edge-tts 语音合成
+├── assets/
+│   ├── sounds/          # 生成的 WAV 音效
+│   └── generate_sounds.py
+├── data/                # 运行时数据（prompts.json 等）
+└── requirements.txt
+```
+
+## 关键设计决策
+
+1. **torch 优先导入** — main.py 中 `import torch` 必须在 PyQt6 之前，否则 Windows DLL 冲突
+2. **所有音频用 Qt 原生** — QSoundEffect（SFX）+ QMediaPlayer（TTS），避免 pygame 崩溃
+3. **OCR 用 HF 镜像** — `HF_ENDPOINT=https://hf-mirror.com`，国内加速模型下载
+4. **Streaming 解析** — Ollama streaming 实时输出，每次 callback 重渲染 Markdown HTML
+5. **PromptManager** — system prompt 持久化到 data/prompts.json，支持 `{text}` 占位符和临时 prompt
+6. **弹窗复用** — ResultWindow 和 PromptDialog 创建后复用，不重复创建
+7. **始终绘制背景** — paintEvent 中即使 acrylic 生效也要绘制低 alpha 填充，否则窗口点击穿透
+8. **response.close()** — Ollama streaming response 在 finally 中关闭，防止第二次请求挂起
+9. **窗口拖动** — 通过 mousePressEvent 检测 y < TITLE_BAR_HEIGHT 实现标题栏拖动
+
+## 虚拟环境
+
+```bash
+d:\AI\jp-assistant\.venv\Scripts\python.exe d:\AI\jp-assistant\main.py
+```
+
+执行任何 Python 脚本/pip 命令都使用此 venv。pip 安装用清华源 + `$env:NO_PROXY="*"` 绕过系统代理。

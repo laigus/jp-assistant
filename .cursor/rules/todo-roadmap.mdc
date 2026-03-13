@@ -1,0 +1,30 @@
+---
+description: 项目待办事项和开发路线图
+alwaysApply: true
+---
+
+# TODO / Roadmap
+
+## 已完成
+- [x] 截图 OCR 识别（manga-ocr + HF 镜像）
+- [x] Ollama 翻译 + 语法解析（streaming）
+- [x] edge-tts 语音朗读（Qt QMediaPlayer）
+- [x] 无边框磨砂玻璃面板（Acrylic）
+- [x] 玻璃音效
+- [x] 全局快捷键 Ctrl+Shift+J
+- [x] OCR 文本可编辑后重新解析
+- [x] Markdown 格式化渲染解析结果
+- [x] 模型选择（下拉框，默认 deepseek-v3.1:671b-cloud）
+- [x] Prompt 管理（编辑系统 prompt + 临时 prompt）
+- [x] 字体优化（Yu Gothic UI / Meiryo / Microsoft YaHei UI）
+- [x] 解析结果弹窗展开
+
+## 待做
+- [ ] 分行 OCR 优化：当前二值化阈值(200)只适合白底黑字，需自动检测背景深浅适配游戏截图（深色底+浅色字）
+- [ ] OCR+云端纠错优化：deepseek 是纯文本模型不支持图片，改为纯文本纠错（利用上下文推断修正）或使用 VLM 模型
+- [ ] 界面美化（布局细节调整）
+
+## 已知问题与修复记录
+- Acrylic 生效后必须仍绘制低 alpha 背景，否则 WA_TranslucentBackground 导致点击穿透
+- Ollama streaming response 必须在 finally 中 close()，否则第二次请求挂起
+- 弹窗关闭后需重置 _acrylic_applied=False，下次打开重新应用效果

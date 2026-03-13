@@ -39,11 +39,11 @@ def main():
     window = MainWindow(ocr_engine=ocr)
     window.show()
 
-    # Global hotkey: Ctrl+Shift+J to capture
+    # Global hotkey: Ctrl+Alt+S to capture
     def on_hotkey():
         QTimer.singleShot(0, window._on_capture_click)
 
-    keyboard.add_hotkey("ctrl+shift+j", on_hotkey, suppress=True)
+    keyboard.add_hotkey("ctrl+alt+s", on_hotkey, suppress=True)
 
     sys.exit(app.exec())
 

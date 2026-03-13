@@ -1,86 +1,13 @@
-"""Generate crystal/glass sound effects programmatically."""
+"""Generate crystal/glass sound effects — clear, warm, elegant."""
 import struct
 import wave
 import math
 import os
 
-def generate_tone(freq, duration, volume=0.3, sample_rate=44100):
-    samples = []
-    n_samples = int(sample_rate * duration)
-    for i in range(n_samples):
-        t = i / sample_rate
-        envelope = math.exp(-t * 8) * volume
-        sample = envelope * math.sin(2 * math.pi * freq * t)
-        samples.append(sample)
-    return samples
 
-def generate_glass_click(filename, sample_rate=44100):
-    """Crystal glass click - short, bright, elegant."""
-    duration = 0.4
-    samples = [0.0] * int(sample_rate * duration)
-    
-    for freq, vol, decay in [(2800, 0.25, 12), (4200, 0.18, 15), (5600, 0.12, 18), (7000, 0.08, 22)]:
-        n = int(sample_rate * duration)
-        for i in range(n):
-            t = i / sample_rate
-            env = math.exp(-t * decay) * vol
-            samples[i] += env * math.sin(2 * math.pi * freq * t)
-    
-    for freq, vol in [(1400, 0.15), (2100, 0.10)]:
-        n = int(sample_rate * 0.05)
-        for i in range(min(n, len(samples))):
-            t = i / sample_rate
-            env = math.exp(-t * 40) * vol
-            samples[i] += env * math.sin(2 * math.pi * freq * t)
-    
-    save_wav(filename, samples, sample_rate)
-
-def generate_glass_chime(filename, sample_rate=44100):
-    """Longer glass chime for completion/success."""
-    duration = 0.8
-    samples = [0.0] * int(sample_rate * duration)
-    
-    notes = [
-        (2093, 0.0, 0.20, 10),
-        (2637, 0.08, 0.18, 9),
-        (3136, 0.16, 0.15, 8),
-    ]
-    
-    for freq, start, vol, decay in notes:
-        start_idx = int(sample_rate * start)
-        for i in range(start_idx, len(samples)):
-            t = (i - start_idx) / sample_rate
-            env = math.exp(-t * decay) * vol
-            samples[i] += env * math.sin(2 * math.pi * freq * t)
-            samples[i] += env * 0.3 * math.sin(2 * math.pi * freq * 2 * t)
-    
-    save_wav(filename, samples, sample_rate)
-
-def generate_capture_sound(filename, sample_rate=44100):
-    """Quick shutter-like crystal sound for screenshot capture."""
-    duration = 0.25
-    samples = [0.0] * int(sample_rate * duration)
-    
-    for freq, vol, decay in [(3500, 0.3, 20), (5000, 0.2, 25), (7000, 0.1, 30)]:
-        for i in range(len(samples)):
-            t = i / sample_rate
-            env = math.exp(-t * decay) * vol
-            samples[i] += env * math.sin(2 * math.pi * freq * t)
-    
-    n_noise = int(sample_rate * 0.02)
-    import random
-    random.seed(42)
-    for i in range(min(n_noise, len(samples))):
-        t = i / sample_rate
-        env = math.exp(-t * 60) * 0.08
-        samples[i] += env * (random.random() * 2 - 1)
-    
-    save_wav(filename, samples, sample_rate)
-
-def save_wav(filename, samples, sample_rate):
-    max_val = max(abs(s) for s in samples) or 1
-    samples = [s / max_val * 0.8 for s in samples]
-    
+def save_wav(filename, samples, sample_rate=44100):
+    peak = max(abs(s) for s in samples) or 1
+    samples = [s / peak * 0.75 for s in samples]
     with wave.open(filename, 'w') as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -88,11 +15,88 @@ def save_wav(filename, samples, sample_rate):
         for s in samples:
             w.writeframes(struct.pack('<h', int(s * 32767)))
 
+
+def _sine(freq, t):
+    return math.sin(2 * math.pi * freq * t)
+
+
+def generate_glass_click(filename, sr=44100):
+    """Soft crystal tap — warm and brief."""
+    dur = 0.35
+    n = int(sr * dur)
+    samples = [0.0] * n
+
+    tones = [
+        (1200, 0.30, 6.0),
+        (1800, 0.18, 8.0),
+        (2400, 0.10, 11.0),
+        (3000, 0.05, 14.0),
+    ]
+
+    for freq, vol, decay in tones:
+        for i in range(n):
+            t = i / sr
+            attack = min(t / 0.003, 1.0)
+            env = attack * math.exp(-t * decay) * vol
+            samples[i] += env * _sine(freq, t)
+            samples[i] += env * 0.15 * _sine(freq * 2.0, t)
+
+    save_wav(filename, samples, sr)
+
+
+def generate_glass_chime(filename, sr=44100):
+    """Ascending wind-chime — three clear notes."""
+    dur = 1.0
+    n = int(sr * dur)
+    samples = [0.0] * n
+
+    notes = [
+        (880,  0.00, 0.28, 4.0),
+        (1109, 0.10, 0.24, 3.5),
+        (1319, 0.22, 0.22, 3.0),
+    ]
+
+    for freq, start, vol, decay in notes:
+        si = int(sr * start)
+        for i in range(si, n):
+            t = (i - si) / sr
+            attack = min(t / 0.005, 1.0)
+            env = attack * math.exp(-t * decay) * vol
+            samples[i] += env * _sine(freq, t)
+            samples[i] += env * 0.2 * _sine(freq * 2.0, t)
+            samples[i] += env * 0.08 * _sine(freq * 3.0, t)
+
+    save_wav(filename, samples, sr)
+
+
+def generate_capture_sound(filename, sr=44100):
+    """Quick camera-like crystal ping."""
+    dur = 0.2
+    n = int(sr * dur)
+    samples = [0.0] * n
+
+    tones = [
+        (1500, 0.30, 12.0),
+        (2200, 0.18, 16.0),
+        (3300, 0.08, 22.0),
+    ]
+
+    for freq, vol, decay in tones:
+        for i in range(n):
+            t = i / sr
+            attack = min(t / 0.002, 1.0)
+            env = attack * math.exp(-t * decay) * vol
+            samples[i] += env * _sine(freq, t)
+
+    save_wav(filename, samples, sr)
+
+
 if __name__ == '__main__':
     sound_dir = os.path.dirname(os.path.abspath(__file__))
     sounds_dir = os.path.join(sound_dir, 'sounds')
-    
+    os.makedirs(sounds_dir, exist_ok=True)
+
     generate_glass_click(os.path.join(sounds_dir, 'click.wav'))
     generate_glass_chime(os.path.join(sounds_dir, 'chime.wav'))
     generate_capture_sound(os.path.join(sounds_dir, 'capture.wav'))
-    print("Sound effects generated successfully!")
+    print("Sound effects generated.")

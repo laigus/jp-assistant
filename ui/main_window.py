@@ -3,7 +3,7 @@ import os
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit,
-    QLabel, QApplication, QSizePolicy
+    QLabel, QApplication, QSizePolicy, QTextBrowser,
 )
 from PyQt6.QtCore import Qt, QPoint, pyqtSignal, QThread, pyqtSlot, QRectF, QUrl
 from PyQt6.QtGui import QColor, QPainter, QPainterPath, QLinearGradient, QPen
@@ -11,26 +11,44 @@ from PyQt6.QtMultimedia import QSoundEffect, QMediaPlayer, QAudioOutput
 
 from ui.styles import MAIN_STYLE
 from ui.acrylic import enable_acrylic
+from ui.glass_base import paint_glass
 from ui.screenshot import ScreenshotOverlay
+from ui.md_render import md_to_html
+from ui.result_window import ResultWindow
+from ui.settings_dialog import SettingsDialog
 from core.translator import GrammarAnalyzer
+from core.prompt_manager import PromptManager
 from core.tts import TextToSpeech
+from core.ocr import OCR_MODE_BASIC, OCR_MODE_LINES, OCR_MODE_CORRECT
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOUNDS_DIR = os.path.join(BASE_DIR, "assets", "sounds")
+DATA_DIR = os.path.join(BASE_DIR, "data")
 
 
 class OcrWorker(QThread):
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
 
-    def __init__(self, ocr_engine, image):
+    def __init__(self, ocr_engine, image, mode: str = OCR_MODE_BASIC,
+                 model: str = "", base_url: str = ""):
         super().__init__()
         self.ocr_engine = ocr_engine
         self.image = image
+        self.mode = mode
+        self.model = model
+        self.base_url = base_url
 
     def run(self):
         try:
-            text = self.ocr_engine.recognize(self.image)
+            if self.mode == OCR_MODE_LINES:
+                text = self.ocr_engine.recognize_lines(self.image)
+            elif self.mode == OCR_MODE_CORRECT:
+                text = self.ocr_engine.recognize_with_correction(
+                    self.image, model=self.model, base_url=self.base_url
+                )
+            else:
+                text = self.ocr_engine.recognize(self.image)
             self.finished.emit(text)
         except Exception as e:
             self.error.emit(str(e))
@@ -40,15 +58,15 @@ class AnalyzeWorker(QThread):
     progress = pyqtSignal(str)
     finished = pyqtSignal(str)
 
-    def __init__(self, analyzer: GrammarAnalyzer, text: str):
+    def __init__(self, analyzer: GrammarAnalyzer, prompt: str):
         super().__init__()
         self.analyzer = analyzer
-        self.text = text
+        self.prompt = prompt
 
     def run(self):
         result = self.analyzer.analyze(
-            self.text,
-            callback=lambda t: self.progress.emit(t)
+            self.prompt,
+            callback=lambda t: self.progress.emit(t),
         )
         self.finished.emit(result)
 
@@ -66,25 +84,44 @@ class TtsWorker(QThread):
         self.finished.emit(path)
 
 
+class ModelListWorker(QThread):
+    finished = pyqtSignal(list)
+
+    def __init__(self, analyzer: GrammarAnalyzer):
+        super().__init__()
+        self.analyzer = analyzer
+
+    def run(self):
+        models = self.analyzer.list_models()
+        self.finished.emit(models)
+
+
 class MainWindow(QWidget):
     """Frameless, always-on-top window with Windows Acrylic blur."""
+
+    DEFAULT_MODEL = "deepseek-v3.1:671b-cloud"
 
     def __init__(self, ocr_engine=None):
         super().__init__()
         self.ocr_engine = ocr_engine
         self.analyzer = GrammarAnalyzer()
         self.tts = TextToSpeech()
+        self.prompt_mgr = PromptManager(DATA_DIR)
         self.screenshot_overlay = ScreenshotOverlay()
 
         self._drag_pos = None
         self._workers = []
         self._acrylic_applied = False
+        self._last_md = ""
+        self._ocr_mode = OCR_MODE_LINES
+        self._last_image = None
 
         self._init_audio()
         self._init_ui()
         self._connect_signals()
+        self._load_models_async()
 
-    # ── Audio: all via Qt native (QSoundEffect + QMediaPlayer) ──
+    # ── Audio ──
 
     def _init_audio(self):
         self._sfx = {}
@@ -118,15 +155,15 @@ class MainWindow(QWidget):
             | Qt.WindowType.WindowStaysOnTopHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setMinimumSize(400, 320)
-        self.resize(440, 580)
+        self.setMinimumSize(420, 380)
+        self.resize(460, 660)
         self.setStyleSheet(MAIN_STYLE)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 14, 18, 18)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
-        # --- Title bar ---
+        # ── title bar ──
         title_bar = QHBoxLayout()
         title_bar.setSpacing(6)
 
@@ -138,6 +175,12 @@ class MainWindow(QWidget):
         self.status_label = QLabel("就绪")
         self.status_label.setObjectName("statusLabel")
         title_bar.addWidget(self.status_label)
+
+        settings_btn = QPushButton("⚙")
+        settings_btn.setObjectName("iconBtn")
+        settings_btn.setToolTip("设置（模型/识别/Prompt）")
+        settings_btn.clicked.connect(self._on_settings_click)
+        title_bar.addWidget(settings_btn)
 
         min_btn = QPushButton("─")
         min_btn.setObjectName("minBtn")
@@ -153,13 +196,13 @@ class MainWindow(QWidget):
 
         layout.addLayout(title_bar)
 
-        # --- Capture button ---
-        self.capture_btn = QPushButton("📷  截图识别  (Ctrl+Shift+J)")
+        # ── capture button ──
+        self.capture_btn = QPushButton("📷  截图识别  (Ctrl+Alt+S)")
         self.capture_btn.setObjectName("captureBtn")
         self.capture_btn.clicked.connect(self._on_capture_click)
         layout.addWidget(self.capture_btn)
 
-        # --- OCR result (editable) ---
+        # ── OCR result (editable) ──
         ocr_label = QLabel("识别文本（可编辑）")
         ocr_label.setObjectName("sectionLabel")
         layout.addWidget(ocr_label)
@@ -170,9 +213,20 @@ class MainWindow(QWidget):
         self.ocr_text.setAcceptRichText(False)
         layout.addWidget(self.ocr_text)
 
-        # --- Action buttons ---
+        # ── temp prompt ──
+        tp_label = QLabel("临时指令（仅下次解析生效）")
+        tp_label.setObjectName("sectionLabel")
+        layout.addWidget(tp_label)
+
+        self.temp_prompt_edit = QTextEdit()
+        self.temp_prompt_edit.setPlaceholderText("例如：请额外说明敬语用法...")
+        self.temp_prompt_edit.setAcceptRichText(False)
+        self.temp_prompt_edit.setMaximumHeight(50)
+        layout.addWidget(self.temp_prompt_edit)
+
+        # ── action buttons ──
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
+        btn_row.setSpacing(6)
 
         self.analyze_btn = QPushButton("🔍 解析")
         self.analyze_btn.clicked.connect(self._on_analyze_click)
@@ -182,62 +236,69 @@ class MainWindow(QWidget):
         self.speak_btn.clicked.connect(self._on_speak_click)
         btn_row.addWidget(self.speak_btn)
 
+        self.expand_btn = QPushButton("⤢")
+        self.expand_btn.setObjectName("iconBtn")
+        self.expand_btn.setToolTip("展开查看详细结果")
+        self.expand_btn.clicked.connect(self._on_expand_click)
+        btn_row.addWidget(self.expand_btn)
+
         layout.addLayout(btn_row)
 
-        # --- Analysis result ---
+        # ── analysis result (markdown) ──
         analysis_label = QLabel("解析结果")
         analysis_label.setObjectName("sectionLabel")
         layout.addWidget(analysis_label)
 
-        self.analysis_area = QTextEdit()
-        self.analysis_area.setObjectName("analysisArea")
-        self.analysis_area.setReadOnly(True)
-        self.analysis_area.setPlaceholderText("点击「解析」查看翻译和语法分析...")
-        self.analysis_area.setSizePolicy(
+        self.analysis_browser = QTextBrowser()
+        self.analysis_browser.setOpenExternalLinks(False)
+        self.analysis_browser.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
-        layout.addWidget(self.analysis_area, stretch=1)
+        layout.addWidget(self.analysis_browser, stretch=1)
 
-        # Position: top-right of screen
+        # ── sub-windows (lazy-created, reused) ──
+        self._result_window = None
+        self._settings_dialog = None
+
+        # ── position ──
         screen = QApplication.primaryScreen().geometry()
         self.move(screen.width() - self.width() - 20, 50)
 
     def _connect_signals(self):
         self.screenshot_overlay.region_captured.connect(self._on_region_captured)
 
-    # ── Custom painting: rounded rect background ──
+    # ── model management ──
+
+    def _load_models_async(self):
+        worker = ModelListWorker(self.analyzer)
+        worker.finished.connect(self._on_models_loaded)
+        self._workers.append(worker)
+        worker.start()
+
+    @pyqtSlot(list)
+    def _on_models_loaded(self, models: list):
+        if self._settings_dialog:
+            self._settings_dialog.set_models(models, self.DEFAULT_MODEL)
+        self._models_cache = models
+
+    def _on_settings_changed(self):
+        if self._settings_dialog:
+            model = self._settings_dialog.current_model
+            self.analyzer.model = model
+            self._ocr_mode = self._settings_dialog.current_ocr_mode
+            self.status_label.setText(f"模型: {model[:25]}")
+
+    # ── painting ──
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        path = QPainterPath()
-        path.addRoundedRect(rect, 16, 16)
-
-        if not self._acrylic_applied:
-            grad = QLinearGradient(0, 0, 0, rect.height())
-            grad.setColorAt(0.0, QColor(25, 25, 40, 220))
-            grad.setColorAt(1.0, QColor(15, 15, 28, 235))
-            painter.fillPath(path, grad)
-
-        # Top highlight (glass reflection)
-        highlight_rect = QRectF(rect.x() + 1, rect.y() + 1, rect.width() - 2, 1.5)
-        highlight_path = QPainterPath()
-        highlight_path.addRoundedRect(highlight_rect, 16, 16)
-        painter.fillPath(highlight_path, QColor(136, 204, 255, 50))
-
-        # Subtle border
-        pen = QPen(QColor(136, 204, 255, 30), 1.0)
-        painter.setPen(pen)
-        painter.drawPath(path)
-
+        paint_glass(painter, self.rect(), self._acrylic_applied)
         painter.end()
 
-    # ── Window dragging ──
+    # ── drag ──
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton and event.position().y() < 44:
             self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
 
@@ -249,17 +310,17 @@ class MainWindow(QWidget):
     def mouseReleaseEvent(self, event):
         self._drag_pos = None
 
-    # ── Acrylic blur ──
+    # ── acrylic ──
 
     def showEvent(self, event):
         super().showEvent(event)
         if not self._acrylic_applied:
             hwnd = int(self.winId())
-            self._acrylic_applied = enable_acrylic(hwnd, tint_color=0xAA201520)
+            self._acrylic_applied = enable_acrylic(hwnd, tint_color=0x18080810)
             if self._acrylic_applied:
                 self.update()
 
-    # ── Actions ──
+    # ── actions ──
 
     def _on_capture_click(self):
         self._play_sound("click")
@@ -268,10 +329,16 @@ class MainWindow(QWidget):
 
     def _on_region_captured(self, image):
         self._play_sound("capture")
-        self.status_label.setText("正在识别...")
-
+        self._last_image = image
+        mode_label = {"basic": "OCR", "lines": "分行OCR", "correct": "OCR+纠错"}
+        self.status_label.setText(f"正在识别（{mode_label.get(self._ocr_mode, 'OCR')}）...")
         if self.ocr_engine:
-            worker = OcrWorker(self.ocr_engine, image)
+            worker = OcrWorker(
+                self.ocr_engine, image,
+                mode=self._ocr_mode,
+                model=self.analyzer.model,
+                base_url=self.analyzer.base_url,
+            )
             worker.finished.connect(self._on_ocr_done)
             worker.error.connect(self._on_ocr_error)
             self._workers.append(worker)
@@ -298,9 +365,16 @@ class MainWindow(QWidget):
         self._play_sound("click")
         self.status_label.setText("正在解析...")
         self.analyze_btn.setEnabled(False)
-        self.analysis_area.clear()
+        self.analysis_browser.clear()
+        self._last_md = ""
 
-        worker = AnalyzeWorker(self.analyzer, text)
+        temp = self.temp_prompt_edit.toPlainText().strip()
+        if temp:
+            self.prompt_mgr.temp_prompt = temp
+            self.temp_prompt_edit.clear()
+
+        prompt = self.prompt_mgr.build_prompt(text)
+        worker = AnalyzeWorker(self.analyzer, prompt)
         worker.progress.connect(self._on_analysis_progress)
         worker.finished.connect(self._on_analysis_done)
         self._workers.append(worker)
@@ -308,13 +382,17 @@ class MainWindow(QWidget):
 
     @pyqtSlot(str)
     def _on_analysis_progress(self, text):
-        self.analysis_area.setPlainText(text)
-        sb = self.analysis_area.verticalScrollBar()
+        self._last_md = text
+        html = md_to_html(text)
+        self.analysis_browser.setHtml(html)
+        sb = self.analysis_browser.verticalScrollBar()
         sb.setValue(sb.maximum())
 
     @pyqtSlot(str)
     def _on_analysis_done(self, text):
-        self.analysis_area.setPlainText(text)
+        self._last_md = text
+        html = md_to_html(text)
+        self.analysis_browser.setHtml(html)
         self.analyze_btn.setEnabled(True)
         self.status_label.setText("解析完成")
         self._play_sound("chime")
@@ -344,8 +422,41 @@ class MainWindow(QWidget):
             if state == QMediaPlayer.PlaybackState.StoppedState:
                 self.status_label.setText("就绪")
 
+        try:
+            self._media_player.playbackStateChanged.disconnect()
+        except TypeError:
+            pass
         self._media_player.playbackStateChanged.connect(_on_state_changed)
+
+    def _on_settings_click(self):
+        self._play_sound("click")
+        if self._settings_dialog is None:
+            self._settings_dialog = SettingsDialog(self.prompt_mgr)
+            self._settings_dialog.setStyleSheet(MAIN_STYLE)
+            self._settings_dialog.settings_changed.connect(self._on_settings_changed)
+            if hasattr(self, '_models_cache'):
+                self._settings_dialog.set_models(self._models_cache, self.DEFAULT_MODEL)
+            else:
+                self._settings_dialog.set_models([], self.DEFAULT_MODEL)
+            self._settings_dialog.set_ocr_mode(self._ocr_mode)
+        self._settings_dialog.show_dialog()
+
+    def _on_expand_click(self):
+        if not self._last_md:
+            self.status_label.setText("没有解析结果可展开")
+            return
+        self._play_sound("click")
+        if self._result_window is None:
+            self._result_window = ResultWindow()
+            self._result_window.setStyleSheet(MAIN_STYLE)
+        html = md_to_html(self._last_md, large=True)
+        self._result_window.set_html(html)
+        self._result_window.show_at_saved_pos()
 
     def closeEvent(self, event):
         self.tts.cleanup()
+        if self._result_window:
+            self._result_window.close()
+        if self._settings_dialog:
+            self._settings_dialog.close()
         super().closeEvent(event)

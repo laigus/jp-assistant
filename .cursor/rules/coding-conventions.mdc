@@ -1,0 +1,29 @@
+---
+description: 项目编码规范和注意事项
+globs: "**/*.py"
+alwaysApply: false
+---
+
+# 编码规范
+
+## Python 环境
+- 虚拟环境：`d:\AI\jp-assistant\.venv`
+- pip 安装使用清华源：`-i https://pypi.tuna.tsinghua.edu.cn/simple`
+- 需要设置 `$env:NO_PROXY="*"` 绕过系统代理
+
+## PyQt6 注意事项
+- `import torch` 必须在任何 PyQt6 导入之前（DLL 冲突）
+- 音频只用 Qt 原生：QSoundEffect（WAV 音效）、QMediaPlayer + QAudioOutput（TTS MP3）
+- 所有窗口（主窗口/弹窗/对话框）使用一致的磨砂玻璃风格：FramelessWindowHint + WA_TranslucentBackground + 自定义 paintEvent
+- Worker 线程继承 QThread，通过信号传递结果到主线程
+
+## Ollama API
+- 基地址：http://localhost:11434
+- 默认模型：deepseek-v3.1:671b-cloud
+- 使用 streaming 模式，timeout=(10, 600)
+- Prompt 由 PromptManager 构建，analyzer.analyze() 接收完整 prompt 字符串
+
+## 文件组织
+- UI 代码放 `ui/`，业务逻辑放 `core/`
+- 样式集中在 `ui/styles.py`（QSS）和 `ui/md_render.py`（HTML CSS）
+- 运行时数据放 `data/`（已 gitignore）

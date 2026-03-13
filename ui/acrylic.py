@@ -29,11 +29,47 @@ ACCENT_ENABLE_ACRYLICBLURBEHIND = 4
 WCA_ACCENT_POLICY = 19
 
 
+class MARGINS(ctypes.Structure):
+    _fields_ = [
+        ("cxLeftWidth", ctypes.c_int),
+        ("cxRightWidth", ctypes.c_int),
+        ("cyTopHeight", ctypes.c_int),
+        ("cyBottomHeight", ctypes.c_int),
+    ]
+
+
+DWMWA_WINDOW_CORNER_PREFERENCE = 33
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+DWMWCP_ROUND = 2
+
+
+def enable_rounded_corners(hwnd):
+    """Enable native Win11 rounded corners + DWM shadow."""
+    if sys.platform != "win32":
+        return
+    try:
+        dwmapi = ctypes.windll.dwmapi
+
+        val = ctypes.c_int(DWMWCP_ROUND)
+        dwmapi.DwmSetWindowAttribute(
+            hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
+            ctypes.byref(val), ctypes.sizeof(val)
+        )
+
+        dark = ctypes.c_int(1)
+        dwmapi.DwmSetWindowAttribute(
+            hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
+            ctypes.byref(dark), ctypes.sizeof(dark)
+        )
+
+        m = MARGINS(1, 1, 1, 1)
+        dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(m))
+    except Exception:
+        pass
+
+
 def enable_acrylic(hwnd, tint_color=0x30201520):
     """Apply acrylic blur behind a frameless transparent window.
-
-    IMPORTANT: Do NOT combine with DwmExtendFrameIntoClientArea(-1,-1,-1,-1)
-    as that will fill the window with an opaque DWM frame.
 
     Args:
         hwnd: Native window handle
@@ -45,7 +81,6 @@ def enable_acrylic(hwnd, tint_color=0x30201520):
     try:
         user32 = ctypes.windll.user32
 
-        # Try acrylic first (Win10 1803+), fall back to blur-behind
         for accent_state in [ACCENT_ENABLE_ACRYLICBLURBEHIND, ACCENT_ENABLE_BLURBEHIND]:
             accent = AccentPolicy()
             accent.AccentState = accent_state
@@ -59,6 +94,7 @@ def enable_acrylic(hwnd, tint_color=0x30201520):
 
             result = user32.SetWindowCompositionAttribute(hwnd, ctypes.byref(data))
             if result:
+                enable_rounded_corners(hwnd)
                 return True
 
         return False

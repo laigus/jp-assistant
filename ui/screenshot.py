@@ -49,13 +49,17 @@ class ScreenshotOverlay(QWidget):
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
 
             # Draw selection border
-            pen = QPen(QColor(136, 204, 255, 200), 2)
+            pen = QPen(QColor(255, 255, 255, 160), 1.5)
             painter.setPen(pen)
             painter.drawRect(rect)
 
         painter.end()
 
     def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.RightButton:
+            self._selecting = False
+            self.hide()
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             self._origin = event.pos()
             self._current = event.pos()
