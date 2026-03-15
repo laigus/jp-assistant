@@ -127,6 +127,7 @@ class MainWindow(QWidget):
         self._last_md = ""
         self._last_image = None
         self._analyze_worker: AnalyzeWorker | None = None
+        self._tts_cache: tuple[str, str] | None = None  # (text, filepath)
 
         self._init_audio()
         self._init_ui()
@@ -487,6 +488,8 @@ class MainWindow(QWidget):
         self.status_label.setText("已停止" if stopped else "解析完成")
         if not stopped:
             self._play_sound("chime")
+        if self._result_window and self._result_window.isVisible():
+            self._result_window.set_content(text)
 
     def _on_speak_click(self):
         text = self.ocr_text.toPlainText().strip()
@@ -495,11 +498,16 @@ class MainWindow(QWidget):
             return
 
         self._play_sound("click")
+
+        if self._tts_cache and self._tts_cache[0] == text and os.path.exists(self._tts_cache[1]):
+            self._on_tts_done(self._tts_cache[1])
+            return
+
         self.status_label.setText("合成语音中...")
         self.speak_btn.setEnabled(False)
 
         worker = TtsWorker(self.tts, text)
-        worker.result_ready.connect(self._on_tts_done)
+        worker.result_ready.connect(lambda path: self._on_tts_done(path, text))
         worker.error.connect(lambda e: self._on_tts_error(e))
         self._start_worker(worker)
 
@@ -507,8 +515,9 @@ class MainWindow(QWidget):
         self.speak_btn.setEnabled(True)
         self.status_label.setText(f"语音合成失败: {err[:40]}")
 
-    @pyqtSlot(str)
-    def _on_tts_done(self, filepath):
+    def _on_tts_done(self, filepath, cache_text=None):
+        if cache_text:
+            self._tts_cache = (cache_text, filepath)
         self.speak_btn.setEnabled(True)
         self.status_label.setText("朗读中...")
         self._play_tts_file(filepath)
