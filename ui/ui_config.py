@@ -44,6 +44,7 @@ class UIConfig:
             cls._instance._opacity = 15
             cls._instance._theme = "dark"
             cls._instance._acrylic_enabled = True
+            cls._instance._chime_enabled = True
             cls._instance._window_pos = None
             cls._instance._selected_model = ""
             cls._instance._result_pos = None
@@ -59,6 +60,7 @@ class UIConfig:
                 t = data.get("theme", "dark")
                 self._theme = t if t in THEMES else "dark"
                 self._acrylic_enabled = data.get("acrylic", True)
+                self._chime_enabled = data.get("chime", True)
                 pos = data.get("window_pos")
                 if pos and len(pos) == 2:
                     self._window_pos = tuple(pos)
@@ -77,6 +79,7 @@ class UIConfig:
                 "opacity": self._opacity,
                 "theme": self._theme,
                 "acrylic": self._acrylic_enabled,
+                "chime": self._chime_enabled,
             }
             if self._window_pos:
                 data["window_pos"] = list(self._window_pos)
@@ -120,6 +123,14 @@ class UIConfig:
     @acrylic_enabled.setter
     def acrylic_enabled(self, val: bool):
         self._acrylic_enabled = val
+
+    @property
+    def chime_enabled(self) -> bool:
+        return self._chime_enabled
+
+    @chime_enabled.setter
+    def chime_enabled(self, val: bool):
+        self._chime_enabled = val
 
     def acrylic_tint(self) -> int:
         """Return tint_color in AABBGGRR format for Windows Acrylic API."""

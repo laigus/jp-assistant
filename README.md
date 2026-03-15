@@ -57,6 +57,18 @@ python -m venv .venv
 
 ## 启动
 
+### 方式一：桌面快捷方式（推荐）
+
+运行一次安装脚本，自动生成图标和桌面快捷方式：
+
+```bash
+.venv\Scripts\python.exe setup_shortcut.py
+```
+
+之后双击桌面上的 **"JP Assistant"** 图标即可启动，无需打开终端。
+
+### 方式二：命令行启动
+
 ```bash
 .venv\Scripts\python.exe main.py
 ```

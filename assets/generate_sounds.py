@@ -45,26 +45,25 @@ def generate_glass_click(filename, sr=44100):
 
 
 def generate_glass_chime(filename, sr=44100):
-    """Ascending wind-chime — three clear notes."""
-    dur = 1.0
+    """Marimba triple — ascending three-note chime."""
+    dur = 0.8
     n = int(sr * dur)
     samples = [0.0] * n
 
     notes = [
-        (880,  0.00, 0.28, 4.0),
-        (1109, 0.10, 0.24, 3.5),
-        (1319, 0.22, 0.22, 3.0),
+        (0.0,  880),
+        (0.1,  1109),
+        (0.2,  1319),
     ]
 
-    for freq, start, vol, decay in notes:
-        si = int(sr * start)
+    for note_start, freq in notes:
+        si = int(sr * note_start)
         for i in range(si, n):
             t = (i - si) / sr
-            attack = min(t / 0.005, 1.0)
-            env = attack * math.exp(-t * decay) * vol
+            attack = min(t / 0.001, 1.0)
+            env = attack * math.exp(-t * 6.0) * 0.4
             samples[i] += env * _sine(freq, t)
-            samples[i] += env * 0.2 * _sine(freq * 2.0, t)
-            samples[i] += env * 0.08 * _sine(freq * 3.0, t)
+            samples[i] += env * 0.35 * _sine(freq * 4, t) * math.exp(-t * 14)
 
     save_wav(filename, samples, sr)
 

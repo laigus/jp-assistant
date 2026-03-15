@@ -6,6 +6,8 @@ import onnxruntime  # noqa: F401
 
 import sys
 import os
+import logging
+import traceback
 import keyboard
 
 from PyQt6.QtWidgets import QApplication
@@ -14,8 +16,27 @@ from PyQt6.QtCore import QTimer
 from ui.main_window import MainWindow
 from core.ocr import JapaneseOCR
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def _setup_logging():
+    log_path = os.path.join(BASE_DIR, "data", "crash.log")
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    logging.basicConfig(
+        filename=log_path,
+        level=logging.ERROR,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+
+def _global_exception_hook(exc_type, exc_value, exc_tb):
+    msg = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    logging.error("Unhandled exception:\n%s", msg)
+    sys.__excepthook__(exc_type, exc_value, exc_tb)
+
 
 def main():
+    _setup_logging()
+    sys.excepthook = _global_exception_hook
+
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
 

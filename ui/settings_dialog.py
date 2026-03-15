@@ -108,6 +108,12 @@ class SettingsDialog(QWidget):
         self.acrylic_check.setToolTip("关闭后为纯透明，无背景模糊")
         layout.addWidget(self.acrylic_check)
 
+        # chime toggle
+        self.chime_check = QCheckBox("完成提示音")
+        self.chime_check.setChecked(cfg.chime_enabled)
+        self.chime_check.setToolTip("OCR 识别和解析完成时播放提示音")
+        layout.addWidget(self.chime_check)
+
         # --- prompt section ---
         sp_label = QLabel("系统 Prompt（{text} 为待分析文本占位符）")
         sp_label.setObjectName("sectionLabel")
@@ -170,6 +176,7 @@ class SettingsDialog(QWidget):
         idx = list(THEMES.keys()).index(cfg.theme) if cfg.theme in THEMES else 0
         self.theme_combo.setCurrentIndex(idx)
         self.acrylic_check.setChecked(cfg.acrylic_enabled)
+        self.chime_check.setChecked(cfg.chime_enabled)
         if SettingsDialog._saved_pos is not None:
             self.move(SettingsDialog._saved_pos)
         else:
@@ -191,6 +198,7 @@ class SettingsDialog(QWidget):
         cfg.opacity = self.opacity_slider.value()
         cfg.theme = self.theme_combo.currentData()
         cfg.acrylic_enabled = self.acrylic_check.isChecked()
+        cfg.chime_enabled = self.chime_check.isChecked()
         cfg.selected_model = self.model_combo.currentText()
         cfg.save()
         self.settings_changed.emit()

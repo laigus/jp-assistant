@@ -1,5 +1,6 @@
 """Main window - frosted glass floating panel for Japanese learning assistant."""
 import os
+import threading
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit,
@@ -29,7 +30,7 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 
 
 class OcrWorker(QThread):
-    finished = pyqtSignal(str)
+    result_ready = pyqtSignal(str)
     error = pyqtSignal(str)
 
     def __init__(self, ocr_engine, image):
@@ -40,30 +41,39 @@ class OcrWorker(QThread):
     def run(self):
         try:
             text = self.ocr_engine.recognize(self.image)
-            self.finished.emit(text)
+            self.result_ready.emit(text)
         except Exception as e:
             self.error.emit(str(e))
 
 
 class AnalyzeWorker(QThread):
     progress = pyqtSignal(str)
-    finished = pyqtSignal(str)
+    result_ready = pyqtSignal(str)
 
     def __init__(self, analyzer: GrammarAnalyzer, prompt: str):
         super().__init__()
         self.analyzer = analyzer
         self.prompt = prompt
+        self._cancel = threading.Event()
+
+    def cancel(self):
+        self._cancel.set()
 
     def run(self):
-        result = self.analyzer.analyze(
-            self.prompt,
-            callback=lambda t: self.progress.emit(t),
-        )
-        self.finished.emit(result)
+        try:
+            result = self.analyzer.analyze(
+                self.prompt,
+                callback=lambda t: self.progress.emit(t),
+                cancel_check=self._cancel.is_set,
+            )
+            self.result_ready.emit(result)
+        except Exception as e:
+            self.result_ready.emit(f"❌ 解析出错: {e}")
 
 
 class TtsWorker(QThread):
-    finished = pyqtSignal(str)
+    result_ready = pyqtSignal(str)
+    error = pyqtSignal(str)
 
     def __init__(self, tts: TextToSpeech, text: str):
         super().__init__()
@@ -71,24 +81,30 @@ class TtsWorker(QThread):
         self.text = text
 
     def run(self):
-        path = self.tts.speak(self.text)
-        self.finished.emit(path)
+        try:
+            path = self.tts.speak(self.text)
+            self.result_ready.emit(path)
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class ModelListWorker(QThread):
-    finished = pyqtSignal(list)
+    result_ready = pyqtSignal(list)
 
     def __init__(self, analyzer: GrammarAnalyzer):
         super().__init__()
         self.analyzer = analyzer
 
     def run(self):
-        local = self.analyzer.list_models()
-        cloud = GrammarAnalyzer.list_cloud_models()
-        local_set = set(local)
-        cloud_only = sorted(m for m in cloud if m not in local_set)
-        merged = sorted(local) + cloud_only
-        self.finished.emit(merged)
+        try:
+            local = self.analyzer.list_models()
+            cloud = GrammarAnalyzer.list_cloud_models()
+            local_set = set(local)
+            cloud_only = sorted(m for m in cloud if m not in local_set)
+            merged = sorted(local) + cloud_only
+            self.result_ready.emit(merged)
+        except Exception:
+            self.result_ready.emit([])
 
 
 class MainWindow(QWidget):
@@ -110,6 +126,7 @@ class MainWindow(QWidget):
         self._acrylic_applied = False
         self._last_md = ""
         self._last_image = None
+        self._analyze_worker: AnalyzeWorker | None = None
 
         self._init_audio()
         self._init_ui()
@@ -134,6 +151,8 @@ class MainWindow(QWidget):
         self._media_player.setAudioOutput(self._audio_output)
 
     def _play_sound(self, name: str):
+        if name == "chime" and not UIConfig().chime_enabled:
+            return
         if name in self._sfx:
             self._sfx[name].play()
 
@@ -273,7 +292,11 @@ class MainWindow(QWidget):
             self.move(screen.width() - self.width() - 20, 50)
 
     def _start_worker(self, worker: QThread):
-        """Register a worker, start it, and schedule cleanup on finish."""
+        """Register a worker, start it, and schedule cleanup on finish.
+
+        Connects to QThread.finished (the real thread-end signal, not custom
+        result_ready) so deleteLater is only called after the thread stops.
+        """
         self._workers.append(worker)
         worker.finished.connect(lambda: self._cleanup_worker(worker))
         worker.start()
@@ -290,7 +313,7 @@ class MainWindow(QWidget):
 
     def _load_models_async(self):
         worker = ModelListWorker(self.analyzer)
-        worker.finished.connect(self._on_models_loaded)
+        worker.result_ready.connect(self._on_models_loaded)
         self._start_worker(worker)
 
     @pyqtSlot(list)
@@ -391,7 +414,7 @@ class MainWindow(QWidget):
         self.status_label.setText("正在识别...")
         if self.ocr_engine:
             worker = OcrWorker(self.ocr_engine, image)
-            worker.finished.connect(self._on_ocr_done)
+            worker.result_ready.connect(self._on_ocr_done)
             worker.error.connect(self._on_ocr_error)
             self._start_worker(worker)
         else:
@@ -408,6 +431,11 @@ class MainWindow(QWidget):
         self.status_label.setText(f"识别失败: {err[:50]}")
 
     def _on_analyze_click(self):
+        if self._analyze_worker is not None:
+            self._analyze_worker.cancel()
+            self.status_label.setText("正在停止...")
+            return
+
         text = self.ocr_text.toPlainText().strip()
         if not text:
             self.status_label.setText("请先输入或截图获取文本")
@@ -415,7 +443,7 @@ class MainWindow(QWidget):
 
         self._play_sound("click")
         self.status_label.setText("正在解析...")
-        self.analyze_btn.setEnabled(False)
+        self._set_analyze_running(True)
         self.analysis_browser.clear()
         self._last_md = ""
 
@@ -427,8 +455,18 @@ class MainWindow(QWidget):
         prompt = self.prompt_mgr.build_prompt(text)
         worker = AnalyzeWorker(self.analyzer, prompt)
         worker.progress.connect(self._on_analysis_progress)
-        worker.finished.connect(self._on_analysis_done)
+        worker.result_ready.connect(self._on_analysis_done)
+        self._analyze_worker = worker
         self._start_worker(worker)
+
+    def _set_analyze_running(self, running: bool):
+        _ic = icon_color_hex(UIConfig().is_light)
+        if running:
+            self.analyze_btn.setText(" 停止")
+            self.analyze_btn.setIcon(icon("close", 16, _ic))
+        else:
+            self.analyze_btn.setText(" 解析")
+            self.analyze_btn.setIcon(icon("analyze", 16, _ic))
 
     @pyqtSlot(str)
     def _on_analysis_progress(self, text):
@@ -440,12 +478,15 @@ class MainWindow(QWidget):
 
     @pyqtSlot(str)
     def _on_analysis_done(self, text):
+        self._analyze_worker = None
         self._last_md = text
         html = md_to_html(text)
         self.analysis_browser.setHtml(html)
-        self.analyze_btn.setEnabled(True)
-        self.status_label.setText("解析完成")
-        self._play_sound("chime")
+        self._set_analyze_running(False)
+        stopped = text.endswith("⏹ 已停止")
+        self.status_label.setText("已停止" if stopped else "解析完成")
+        if not stopped:
+            self._play_sound("chime")
 
     def _on_speak_click(self):
         text = self.ocr_text.toPlainText().strip()
@@ -458,8 +499,13 @@ class MainWindow(QWidget):
         self.speak_btn.setEnabled(False)
 
         worker = TtsWorker(self.tts, text)
-        worker.finished.connect(self._on_tts_done)
+        worker.result_ready.connect(self._on_tts_done)
+        worker.error.connect(lambda e: self._on_tts_error(e))
         self._start_worker(worker)
+
+    def _on_tts_error(self, err):
+        self.speak_btn.setEnabled(True)
+        self.status_label.setText(f"语音合成失败: {err[:40]}")
 
     @pyqtSlot(str)
     def _on_tts_done(self, filepath):

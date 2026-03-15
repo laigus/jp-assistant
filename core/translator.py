@@ -9,8 +9,11 @@ class GrammarAnalyzer:
         self.base_url = base_url
         self._session = requests.Session()
 
-    def analyze(self, prompt: str, callback=None):
-        """Stream analysis for a pre-built prompt (from PromptManager)."""
+    def analyze(self, prompt: str, callback=None, cancel_check=None):
+        """Stream analysis for a pre-built prompt (from PromptManager).
+
+        cancel_check: callable returning True when the caller wants to abort.
+        """
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -35,6 +38,9 @@ class GrammarAnalyzer:
             thinking_shown = False
 
             for line in resp.iter_lines():
+                if cancel_check and cancel_check():
+                    return full_content + "\n\n⏹ 已停止"
+
                 if not line:
                     continue
                 data = json.loads(line)
