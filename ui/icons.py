@@ -28,6 +28,9 @@ _ICONS = {
     "speak": (
         '<polygon points="6,4 6,20 18,12"/>'
     ),
+    "stop": (
+        '<rect x="5" y="5" width="14" height="14" rx="2"/>'
+    ),
     "expand": (
         '<polyline points="15 3 21 3 21 9" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
         '<polyline points="9 21 3 21 3 15" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'

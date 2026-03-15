@@ -128,6 +128,7 @@ class MainWindow(QWidget):
         self._last_image = None
         self._analyze_worker: AnalyzeWorker | None = None
         self._tts_cache: tuple[str, str] | None = None  # (text, filepath)
+        self._is_speaking = False
 
         self._init_audio()
         self._init_ui()
@@ -350,7 +351,7 @@ class MainWindow(QWidget):
         self._close_btn.setIcon(icon("close", 16, _ic))
         self.capture_btn.setIcon(icon("capture", 18, _ic))
         self.analyze_btn.setIcon(icon("analyze", 16, _ic))
-        self.speak_btn.setIcon(icon("speak", 16, _ic))
+        self.speak_btn.setIcon(icon("stop" if self._is_speaking else "speak", 16, _ic))
         self.expand_btn.setIcon(icon("expand", 16, _ic))
         if self._last_md:
             html = md_to_html(self._last_md)
@@ -492,6 +493,10 @@ class MainWindow(QWidget):
             self._result_window.set_content(text)
 
     def _on_speak_click(self):
+        if self._is_speaking:
+            self._stop_speaking()
+            return
+
         text = self.ocr_text.toPlainText().strip()
         if not text:
             self.status_label.setText("没有可朗读的文本")
@@ -511,19 +516,37 @@ class MainWindow(QWidget):
         worker.error.connect(lambda e: self._on_tts_error(e))
         self._start_worker(worker)
 
+    def _stop_speaking(self):
+        self._media_player.stop()
+        self._set_speaking(False)
+        self.status_label.setText("已停止")
+
+    def _set_speaking(self, speaking: bool):
+        self._is_speaking = speaking
+        _ic = icon_color_hex(UIConfig().is_light)
+        if speaking:
+            self.speak_btn.setText(" 停止")
+            self.speak_btn.setIcon(icon("stop", 16, _ic))
+        else:
+            self.speak_btn.setText(" 朗读")
+            self.speak_btn.setIcon(icon("speak", 16, _ic))
+
     def _on_tts_error(self, err):
         self.speak_btn.setEnabled(True)
+        self._set_speaking(False)
         self.status_label.setText(f"语音合成失败: {err[:40]}")
 
     def _on_tts_done(self, filepath, cache_text=None):
         if cache_text:
             self._tts_cache = (cache_text, filepath)
         self.speak_btn.setEnabled(True)
+        self._set_speaking(True)
         self.status_label.setText("朗读中...")
         self._play_tts_file(filepath)
 
         def _on_state_changed(state):
             if state == QMediaPlayer.PlaybackState.StoppedState:
+                self._set_speaking(False)
                 self.status_label.setText("就绪")
 
         try:
