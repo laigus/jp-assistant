@@ -19,7 +19,7 @@ from ui.screenshot import ScreenshotOverlay
 from ui.md_render import md_to_html
 from ui.result_window import ResultWindow
 from ui.settings_dialog import SettingsDialog
-from core.translator import GrammarAnalyzer
+from core.translator import GrammarAnalyzer, ModelsConfig
 from core.prompt_manager import PromptManager
 from core.tts import TextToSpeech
 
@@ -89,6 +89,7 @@ class TtsWorker(QThread):
 
 
 class ModelListWorker(QThread):
+    """Fetch Ollama model list (local + cloud) in background."""
     result_ready = pyqtSignal(list)
 
     def __init__(self, analyzer: GrammarAnalyzer):
@@ -97,7 +98,7 @@ class ModelListWorker(QThread):
 
     def run(self):
         try:
-            local = self.analyzer.list_models()
+            local = self.analyzer._list_ollama_models()
             cloud = GrammarAnalyzer.list_cloud_models()
             local_set = set(local)
             cloud_only = sorted(m for m in cloud if m not in local_set)
@@ -110,13 +111,16 @@ class ModelListWorker(QThread):
 class MainWindow(QWidget):
     """Frameless, always-on-top window with Windows Acrylic blur."""
 
-    DEFAULT_MODEL = "deepseek-v3.1:671b-cloud"
-
     def __init__(self, ocr_engine=None):
         super().__init__()
         self.ocr_engine = ocr_engine
+        self.models_cfg = ModelsConfig()
         saved_model = UIConfig().selected_model
-        self.analyzer = GrammarAnalyzer(model=saved_model or self.DEFAULT_MODEL)
+        self.analyzer = GrammarAnalyzer(
+            provider_key=self.models_cfg.active_provider,
+            model=saved_model,
+            models_cfg=self.models_cfg,
+        )
         self.tts = TextToSpeech()
         self.prompt_mgr = PromptManager(DATA_DIR)
         self.screenshot_overlay = ScreenshotOverlay()
@@ -321,14 +325,16 @@ class MainWindow(QWidget):
     @pyqtSlot(list)
     def _on_models_loaded(self, models: list):
         if self._settings_dialog:
-            self._settings_dialog.set_models(models, self.DEFAULT_MODEL)
-        self._models_cache = models
+            self._settings_dialog.set_ollama_models(models)
+        self._ollama_models_cache = models
 
     def _on_settings_changed(self):
         if self._settings_dialog:
+            prov_key = self._settings_dialog.current_provider_key
             model = self._settings_dialog.current_model
-            self.analyzer.model = model
-            self.status_label.setText(f"模型: {model[:25]}")
+            self.analyzer.switch_provider(prov_key, model)
+            display = self.models_cfg.provider_display_name(prov_key)
+            self.status_label.setText(f"{display}: {model[:20]}")
         self._reapply_appearance()
 
     def _reapply_appearance(self):
@@ -558,14 +564,12 @@ class MainWindow(QWidget):
     def _on_settings_click(self):
         self._play_sound("click")
         if self._settings_dialog is None:
-            self._settings_dialog = SettingsDialog(self.prompt_mgr)
+            self._settings_dialog = SettingsDialog(self.prompt_mgr, self.models_cfg)
             _c = UIConfig()
             self._settings_dialog.setStyleSheet(build_style(_c.opacity, _c.is_light))
             self._settings_dialog.settings_changed.connect(self._on_settings_changed)
-            if hasattr(self, '_models_cache'):
-                self._settings_dialog.set_models(self._models_cache, self.DEFAULT_MODEL)
-            else:
-                self._settings_dialog.set_models([], self.DEFAULT_MODEL)
+            if hasattr(self, '_ollama_models_cache'):
+                self._settings_dialog.set_ollama_models(self._ollama_models_cache)
         self._settings_dialog.show_dialog()
 
     def _on_expand_click(self):

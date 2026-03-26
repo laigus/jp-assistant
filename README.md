@@ -10,7 +10,7 @@
 - **翻译 + 语法解析** — 整体翻译、逐词解释（读音/词性/含义）、语法说明
 - **Markdown 渲染** — 解析结果格式化显示，清晰易读
 - **语音朗读** — 高质量日语语音朗读识别到的文本
-- **模型切换** — 支持 Ollama 所有模型，默认使用 deepseek-v3.1 云端模型
+- **多 API 后端** — 支持 Ollama、DeepSeek、OpenAI 及所有 OpenAI 兼容 API，在设置中一键切换
 - **Prompt 管理** — 自定义系统 Prompt，支持临时指令
 - **结果展开** — 一键弹出大窗口查看详细解析，支持 Ctrl+滚轮 / 按钮缩放文字
 - **多主题** — 暗黑、深蓝、纯白、浅蓝四种主题，实时切换
@@ -24,7 +24,7 @@
 |------|------|
 | UI 框架 | PyQt6（无边框、Acrylic 磨砂、置顶） |
 | OCR 引擎 | **meikiocr**（ONNX，专为日语游戏文字训练，速度快精度高） |
-| 翻译+语法 | Ollama API 调用 LLM（默认 deepseek-v3.1:671b-cloud） |
+| 翻译+语法 | 多后端 LLM API（Ollama / DeepSeek / OpenAI 兼容） |
 | 语音合成 | edge-tts（微软 Edge 在线神经网络 TTS，日语女声 NanamiNeural） |
 | 音效 | Mixkit 免版权 WAV 音效 + Qt QSoundEffect |
 | 截图 | mss + PyQt 全屏选区覆盖层 |
@@ -39,7 +39,10 @@
 
 - Windows 10/11
 - Python 3.10+
-- [Ollama](https://ollama.com/) 已安装并运行
+- 以下任一 LLM 后端：
+  - [Ollama](https://ollama.com/) 已安装并运行（本地模型）
+  - [DeepSeek API Key](https://platform.deepseek.com/)（推荐，便宜好用）
+  - 任何 OpenAI 兼容 API（OpenAI、通义千问、智谱、Moonshot 等）
 
 ## 安装
 
@@ -83,11 +86,18 @@ python -m venv .venv
 6. 点击 ⚙ 按钮打开设置（模型、Prompt、主题、透明度、Acrylic 开关）
 7. 可在临时 Prompt 输入框中输入额外指令
 
-## Ollama 模型
+## 模型配置
 
-默认使用 `deepseek-v3.1:671b-cloud`（云端模型，速度快质量高）。
+### 使用 DeepSeek API（推荐）
 
-如需使用本地模型：
+1. 前往 [DeepSeek 开放平台](https://platform.deepseek.com/) 注册并获取 API Key
+2. 启动程序后点击 ⚙ 设置
+3. 在「API 提供商」下拉框选择 **DeepSeek**
+4. 填入你的 API Key
+5. 选择模型（`deepseek-chat` 日常够用，`deepseek-reasoner` 更强但更慢）
+6. 点击保存
+
+### 使用 Ollama 本地模型
 
 ```bash
 # 设置模型存储路径（可选）
@@ -97,4 +107,63 @@ $env:OLLAMA_MODELS = "D:\AI\models"
 ollama pull qwen3:8b
 ```
 
-然后在设置面板中切换即可。
+在设置中选择 **Ollama（本地）** 提供商，然后选择模型即可。
+
+### 添加新的 API 提供商
+
+编辑 `data/models_config.json`，在 `providers` 中添加新条目：
+
+```json
+{
+  "providers": {
+    "ollama": { "..." : "..." },
+    "deepseek": { "..." : "..." },
+    "openai": {
+      "name": "OpenAI",
+      "type": "openai_compatible",
+      "base_url": "https://api.openai.com",
+      "api_key": "sk-xxx",
+      "models": ["gpt-4o", "gpt-4o-mini", "o3-mini"],
+      "default_model": "gpt-4o-mini"
+    },
+    "qwen": {
+      "name": "通义千问",
+      "type": "openai_compatible",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode",
+      "api_key": "sk-xxx",
+      "models": ["qwen-plus", "qwen-turbo", "qwen-max"],
+      "default_model": "qwen-plus"
+    },
+    "zhipu": {
+      "name": "智谱 GLM",
+      "type": "openai_compatible",
+      "base_url": "https://open.bigmodel.cn/api/paas",
+      "api_key": "xxx",
+      "models": ["glm-4-flash", "glm-4-plus"],
+      "default_model": "glm-4-flash"
+    },
+    "moonshot": {
+      "name": "Moonshot（Kimi）",
+      "type": "openai_compatible",
+      "base_url": "https://api.moonshot.cn",
+      "api_key": "sk-xxx",
+      "models": ["moonshot-v1-8k", "moonshot-v1-32k"],
+      "default_model": "moonshot-v1-8k"
+    }
+  },
+  "active_provider": "deepseek"
+}
+```
+
+**字段说明**：
+
+| 字段 | 说明 |
+|------|------|
+| `name` | 在设置界面显示的名称 |
+| `type` | `ollama` 或 `openai_compatible`（所有支持 OpenAI 格式的 API 都用后者） |
+| `base_url` | API 地址（不需要加 `/v1/chat/completions`，程序会自动拼接） |
+| `api_key` | 你的 API Key（也可以在设置界面填写，会自动保存到此文件） |
+| `models` | 该提供商可用的模型列表 |
+| `default_model` | 默认选中的模型 |
+
+> 添加后重启程序即可在设置中看到新的提供商。

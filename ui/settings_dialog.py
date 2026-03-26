@@ -1,7 +1,8 @@
-"""Settings dialog — model selection and prompt management."""
+"""Settings dialog — provider / model selection, API key, prompt management."""
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QTextEdit, QApplication, QSizePolicy, QComboBox, QSlider, QCheckBox,
+    QLineEdit, QMessageBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPainter
@@ -10,18 +11,20 @@ from ui.acrylic import enable_acrylic
 from ui.glass_base import paint_glass
 from ui.ui_config import UIConfig, THEMES
 from core.prompt_manager import PromptManager
+from core.translator import ModelsConfig
 
 
 class SettingsDialog(QWidget):
     settings_changed = pyqtSignal()
     _saved_pos = None
 
-    def __init__(self, prompt_manager: PromptManager, parent=None):
+    def __init__(self, prompt_manager: PromptManager, models_cfg: ModelsConfig, parent=None):
         super().__init__(parent)
         self.pm = prompt_manager
+        self.models_cfg = models_cfg
         self._drag_pos = None
         self._acrylic_applied = False
-        self._models_list = []
+        self._ollama_models: list[str] = []
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -29,7 +32,7 @@ class SettingsDialog(QWidget):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.resize(520, 560)
+        self.resize(520, 640)
         self._build_ui()
 
     def _build_ui(self):
@@ -51,15 +54,44 @@ class SettingsDialog(QWidget):
         title_bar.addWidget(close_btn)
         layout.addLayout(title_bar)
 
+        # --- provider section ---
+        prov_label = QLabel("API 提供商")
+        prov_label.setObjectName("sectionLabel")
+        layout.addWidget(prov_label)
+
+        prov_row = QHBoxLayout()
+        prov_row.setSpacing(6)
+        self.provider_combo = QComboBox()
+        self.provider_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        prov_row.addWidget(self.provider_combo)
+        layout.addLayout(prov_row)
+
+        # --- API key ---
+        self.apikey_label = QLabel("API Key")
+        self.apikey_label.setObjectName("sectionLabel")
+        layout.addWidget(self.apikey_label)
+
+        apikey_row = QHBoxLayout()
+        apikey_row.setSpacing(6)
+        self.apikey_edit = QLineEdit()
+        self.apikey_edit.setPlaceholderText("输入 API Key（Ollama 无需填写）")
+        self.apikey_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        apikey_row.addWidget(self.apikey_edit)
+        self.apikey_toggle = QPushButton("👁")
+        self.apikey_toggle.setFixedWidth(32)
+        self.apikey_toggle.setToolTip("显示/隐藏 API Key")
+        self.apikey_toggle.clicked.connect(self._toggle_apikey_visibility)
+        apikey_row.addWidget(self.apikey_toggle)
+        layout.addLayout(apikey_row)
+
         # --- model section ---
         model_label = QLabel("分析模型")
         model_label.setObjectName("sectionLabel")
         layout.addWidget(model_label)
 
         self.model_combo = QComboBox()
-        self.model_combo.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
+        self.model_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         layout.addWidget(self.model_combo)
 
         # --- appearance section ---
@@ -67,7 +99,6 @@ class SettingsDialog(QWidget):
         appear_label.setObjectName("sectionLabel")
         layout.addWidget(appear_label)
 
-        # theme color
         theme_row = QHBoxLayout()
         theme_row.setSpacing(8)
         theme_lbl = QLabel("主题")
@@ -83,7 +114,6 @@ class SettingsDialog(QWidget):
         theme_row.addWidget(self.theme_combo)
         layout.addLayout(theme_row)
 
-        # opacity slider
         opacity_row = QHBoxLayout()
         opacity_row.setSpacing(8)
         opacity_lbl = QLabel("透明度")
@@ -102,13 +132,11 @@ class SettingsDialog(QWidget):
         )
         layout.addLayout(opacity_row)
 
-        # acrylic toggle
         self.acrylic_check = QCheckBox("磨砂玻璃效果（Acrylic）")
         self.acrylic_check.setChecked(cfg.acrylic_enabled)
         self.acrylic_check.setToolTip("关闭后为纯透明，无背景模糊")
         layout.addWidget(self.acrylic_check)
 
-        # chime toggle
         self.chime_check = QCheckBox("完成提示音")
         self.chime_check.setChecked(cfg.chime_enabled)
         self.chime_check.setToolTip("OCR 识别和解析完成时播放提示音")
@@ -149,24 +177,18 @@ class SettingsDialog(QWidget):
     # --- public API ---
 
     @property
+    def current_provider_key(self) -> str:
+        return self.provider_combo.currentData() or ""
+
+    @property
     def current_model(self) -> str:
         return self.model_combo.currentText()
 
-    def set_models(self, models: list, default: str):
-        saved = UIConfig().selected_model
-        preferred = saved or default
-        self.model_combo.blockSignals(True)
-        self.model_combo.clear()
-        if default not in models:
-            self.model_combo.addItem(default)
-        for m in models:
-            self.model_combo.addItem(m)
-        idx = self.model_combo.findText(preferred)
-        if idx >= 0:
-            self.model_combo.setCurrentIndex(idx)
-        else:
-            self.model_combo.setCurrentIndex(0)
-        self.model_combo.blockSignals(False)
+    def set_ollama_models(self, models: list[str]):
+        """Cache Ollama model list (fetched async from main_window)."""
+        self._ollama_models = models
+        if self.current_provider_key == "ollama":
+            self._populate_model_combo()
 
     def show_dialog(self):
         self.prompt_edit.setPlainText(self.pm.system_prompt)
@@ -177,6 +199,9 @@ class SettingsDialog(QWidget):
         self.theme_combo.setCurrentIndex(idx)
         self.acrylic_check.setChecked(cfg.acrylic_enabled)
         self.chime_check.setChecked(cfg.chime_enabled)
+
+        self._refresh_providers()
+
         if SettingsDialog._saved_pos is not None:
             self.move(SettingsDialog._saved_pos)
         else:
@@ -191,9 +216,77 @@ class SettingsDialog(QWidget):
 
     # --- internal ---
 
+    def _refresh_providers(self):
+        self.provider_combo.blockSignals(True)
+        self.provider_combo.clear()
+        for key in self.models_cfg.provider_keys():
+            display = self.models_cfg.provider_display_name(key)
+            self.provider_combo.addItem(display, key)
+        active = self.models_cfg.active_provider
+        idx = self.provider_combo.findData(active)
+        if idx >= 0:
+            self.provider_combo.setCurrentIndex(idx)
+        self.provider_combo.blockSignals(False)
+        self._on_provider_changed()
+
+    def _on_provider_changed(self):
+        key = self.current_provider_key
+        if not key:
+            return
+        prov = self.models_cfg.get_provider(key)
+        ptype = prov.get("type", "ollama")
+
+        needs_key = ptype != "ollama"
+        self.apikey_label.setVisible(needs_key)
+        self.apikey_edit.setVisible(needs_key)
+        self.apikey_toggle.setVisible(needs_key)
+        if needs_key:
+            self.apikey_edit.setText(prov.get("api_key", ""))
+        else:
+            self.apikey_edit.clear()
+
+        self.model_combo.setEditable(ptype != "ollama")
+        self._populate_model_combo()
+
+    def _populate_model_combo(self):
+        key = self.current_provider_key
+        prov = self.models_cfg.get_provider(key)
+        ptype = prov.get("type", "ollama")
+
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+
+        if ptype == "ollama":
+            models = list(self._ollama_models) if self._ollama_models else []
+            default = prov.get("default_model", "deepseek-v3.1:671b-cloud")
+            if default and default not in models:
+                models.insert(0, default)
+        else:
+            models = prov.get("models", [])
+
+        for m in models:
+            self.model_combo.addItem(m)
+
+        saved = UIConfig().selected_model
+        if key == self.models_cfg.active_provider and saved:
+            idx = self.model_combo.findText(saved)
+            if idx >= 0:
+                self.model_combo.setCurrentIndex(idx)
+
+        self.model_combo.blockSignals(False)
+
+    def _toggle_apikey_visibility(self):
+        if self.apikey_edit.echoMode() == QLineEdit.EchoMode.Password:
+            self.apikey_edit.setEchoMode(QLineEdit.EchoMode.Normal)
+            self.apikey_toggle.setText("🔒")
+        else:
+            self.apikey_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            self.apikey_toggle.setText("👁")
+
     def _on_save(self):
         self.pm.system_prompt = self.prompt_edit.toPlainText()
         self.pm.save()
+
         cfg = UIConfig()
         cfg.opacity = self.opacity_slider.value()
         cfg.theme = self.theme_combo.currentData()
@@ -201,6 +294,15 @@ class SettingsDialog(QWidget):
         cfg.chime_enabled = self.chime_check.isChecked()
         cfg.selected_model = self.model_combo.currentText()
         cfg.save()
+
+        prov_key = self.current_provider_key
+        if prov_key:
+            prov = self.models_cfg.get_provider(prov_key)
+            if prov.get("type", "ollama") != "ollama":
+                prov["api_key"] = self.apikey_edit.text().strip()
+            self.models_cfg.active_provider = prov_key
+            self.models_cfg.save()
+
         self.settings_changed.emit()
         self.close()
 
