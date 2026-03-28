@@ -230,8 +230,10 @@ class GrammarAnalyzer:
         return prov.get("models", [])
 
     def _list_ollama_models(self) -> list[str]:
+        ollama_prov = self._cfg.get_provider("ollama")
+        url = ollama_prov.get("base_url", "http://localhost:11434") if ollama_prov else "http://localhost:11434"
         try:
-            resp = self._session.get(f"{self._base_url}/api/tags", timeout=5)
+            resp = self._session.get(f"{url}/api/tags", timeout=5)
             if resp.status_code == 200:
                 return [m["name"] for m in resp.json().get("models", [])]
         except Exception:

@@ -90,22 +90,31 @@ class TtsWorker(QThread):
 
 class ModelListWorker(QThread):
     """Fetch Ollama model list (local + cloud) in background."""
-    result_ready = pyqtSignal(list)
+    result_ready = pyqtSignal(object)
 
     def __init__(self, analyzer: GrammarAnalyzer):
         super().__init__()
         self.analyzer = analyzer
 
+    @staticmethod
+    def _is_cloud_model(name: str) -> bool:
+        """Check if a model name refers to a cloud-proxied model."""
+        tag = name.split(":")[-1] if ":" in name else ""
+        return "cloud" in tag or name.endswith("-cloud")
+
     def run(self):
         try:
-            local = self.analyzer._list_ollama_models()
-            cloud = GrammarAnalyzer.list_cloud_models()
-            local_set = set(local)
-            cloud_only = sorted(m for m in cloud if m not in local_set)
-            merged = sorted(local) + cloud_only
-            self.result_ready.emit(merged)
+            ollama_all = self.analyzer._list_ollama_models()
+            local = sorted(m for m in ollama_all if not self._is_cloud_model(m))
+            ollama_cloud = sorted(m for m in ollama_all if self._is_cloud_model(m))
+            remote_cloud = GrammarAnalyzer.list_cloud_models()
+            seen = set(ollama_cloud)
+            merged_cloud = ollama_cloud + sorted(
+                m for m in remote_cloud if m not in seen
+            )
+            self.result_ready.emit((local, merged_cloud))
         except Exception:
-            self.result_ready.emit([])
+            self.result_ready.emit(([], []))
 
 
 class MainWindow(QWidget):
@@ -322,11 +331,13 @@ class MainWindow(QWidget):
         worker.result_ready.connect(self._on_models_loaded)
         self._start_worker(worker)
 
-    @pyqtSlot(list)
-    def _on_models_loaded(self, models: list):
+    @pyqtSlot(object)
+    def _on_models_loaded(self, result):
+        local, cloud = result
         if self._settings_dialog:
-            self._settings_dialog.set_ollama_models(models)
-        self._ollama_models_cache = models
+            self._settings_dialog.set_ollama_models(local, cloud)
+        self._ollama_local_cache = local
+        self._ollama_cloud_cache = cloud
 
     def _on_settings_changed(self):
         if self._settings_dialog:
@@ -568,8 +579,10 @@ class MainWindow(QWidget):
             _c = UIConfig()
             self._settings_dialog.setStyleSheet(build_style(_c.opacity, _c.is_light))
             self._settings_dialog.settings_changed.connect(self._on_settings_changed)
-            if hasattr(self, '_ollama_models_cache'):
-                self._settings_dialog.set_ollama_models(self._ollama_models_cache)
+            if hasattr(self, '_ollama_local_cache'):
+                self._settings_dialog.set_ollama_models(
+                    self._ollama_local_cache, self._ollama_cloud_cache
+                )
         self._settings_dialog.show_dialog()
 
     def _on_expand_click(self):

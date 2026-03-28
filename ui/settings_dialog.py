@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QMessageBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPainter
+from PyQt6.QtGui import QPainter, QStandardItem, QStandardItemModel
 
 from ui.acrylic import enable_acrylic
 from ui.glass_base import paint_glass
@@ -24,7 +24,8 @@ class SettingsDialog(QWidget):
         self.models_cfg = models_cfg
         self._drag_pos = None
         self._acrylic_applied = False
-        self._ollama_models: list[str] = []
+        self._ollama_local: list[str] = []
+        self._ollama_cloud: list[str] = []
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -184,9 +185,10 @@ class SettingsDialog(QWidget):
     def current_model(self) -> str:
         return self.model_combo.currentText()
 
-    def set_ollama_models(self, models: list[str]):
-        """Cache Ollama model list (fetched async from main_window)."""
-        self._ollama_models = models
+    def set_ollama_models(self, local: list[str], cloud: list[str]):
+        """Cache Ollama model lists (fetched async from main_window)."""
+        self._ollama_local = local
+        self._ollama_cloud = cloud
         if self.current_provider_key == "ollama":
             self._populate_model_combo()
 
@@ -257,15 +259,35 @@ class SettingsDialog(QWidget):
         self.model_combo.clear()
 
         if ptype == "ollama":
-            models = list(self._ollama_models) if self._ollama_models else []
+            local = list(self._ollama_local)
+            cloud = list(self._ollama_cloud)
             default = prov.get("default_model", "deepseek-v3.1:671b-cloud")
-            if default and default not in models:
-                models.insert(0, default)
-        else:
-            models = prov.get("models", [])
+            if default and default not in local and default not in cloud:
+                cloud.insert(0, default)
 
-        for m in models:
-            self.model_combo.addItem(m)
+            model = self.model_combo.model()
+            if not isinstance(model, QStandardItemModel):
+                model = QStandardItemModel(self.model_combo)
+                self.model_combo.setModel(model)
+
+            if local:
+                header = QStandardItem("── 本地模型 ──")
+                header.setEnabled(False)
+                header.setSelectable(False)
+                model.appendRow(header)
+                for m in local:
+                    model.appendRow(QStandardItem(m))
+
+            if cloud:
+                header = QStandardItem("── 云端模型 ──")
+                header.setEnabled(False)
+                header.setSelectable(False)
+                model.appendRow(header)
+                for m in cloud:
+                    model.appendRow(QStandardItem(m))
+        else:
+            for m in prov.get("models", []):
+                self.model_combo.addItem(m)
 
         saved = UIConfig().selected_model
         if key == self.models_cfg.active_provider and saved:
