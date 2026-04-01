@@ -22,6 +22,7 @@ from ui.settings_dialog import SettingsDialog
 from core.translator import GrammarAnalyzer, ModelsConfig
 from core.prompt_manager import PromptManager
 from core.tts import TextToSpeech
+from core.vocab import VocabManager
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -132,6 +133,7 @@ class MainWindow(QWidget):
         )
         self.tts = TextToSpeech()
         self.prompt_mgr = PromptManager(DATA_DIR)
+        self.vocab_mgr = VocabManager()
         self.screenshot_overlay = ScreenshotOverlay()
 
         self._drag_pos = None
@@ -273,6 +275,20 @@ class MainWindow(QWidget):
         self.speak_btn.clicked.connect(self._on_speak_click)
         btn_row.addWidget(self.speak_btn)
 
+        self.vocab_add_btn = QPushButton()
+        self.vocab_add_btn.setIcon(icon("vocab_add", 16, _ic))
+        self.vocab_add_btn.setObjectName("iconBtn")
+        self.vocab_add_btn.setToolTip("加入生词本")
+        self.vocab_add_btn.clicked.connect(self._on_vocab_add_click)
+        btn_row.addWidget(self.vocab_add_btn)
+
+        self.vocab_btn = QPushButton()
+        self.vocab_btn.setIcon(icon("vocab", 16, _ic))
+        self.vocab_btn.setObjectName("iconBtn")
+        self.vocab_btn.setToolTip("打开生词本")
+        self.vocab_btn.clicked.connect(self._on_vocab_click)
+        btn_row.addWidget(self.vocab_btn)
+
         self.expand_btn = QPushButton()
         self.expand_btn.setIcon(icon("expand", 16, _ic))
         self.expand_btn.setObjectName("iconBtn")
@@ -297,6 +313,7 @@ class MainWindow(QWidget):
         # ── sub-windows (lazy-created, reused) ──
         self._result_window = None
         self._settings_dialog = None
+        self._vocab_window = None
 
         # ── position ──
         cfg = UIConfig()
@@ -369,6 +386,8 @@ class MainWindow(QWidget):
         self.capture_btn.setIcon(icon("capture", 18, _ic))
         self.analyze_btn.setIcon(icon("analyze", 16, _ic))
         self.speak_btn.setIcon(icon("stop" if self._is_speaking else "speak", 16, _ic))
+        self.vocab_add_btn.setIcon(icon("vocab_add", 16, _ic))
+        self.vocab_btn.setIcon(icon("vocab", 16, _ic))
         self.expand_btn.setIcon(icon("expand", 16, _ic))
         if self._last_md:
             html = md_to_html(self._last_md)
@@ -381,6 +400,9 @@ class MainWindow(QWidget):
             self._result_window.refresh_theme()
             if hasattr(self._result_window, '_md_text') and self._result_window._md_text:
                 self._result_window.set_content(self._result_window._md_text)
+        if self._vocab_window:
+            self._vocab_window.setStyleSheet(style)
+            self._vocab_window.refresh_theme()
 
     # ── painting ──
 
@@ -585,6 +607,27 @@ class MainWindow(QWidget):
                 )
         self._settings_dialog.show_dialog()
 
+    def _on_vocab_add_click(self):
+        text = self.ocr_text.toPlainText().strip()
+        if not text:
+            self.status_label.setText("没有可添加的文本")
+            return
+        self._play_sound("click")
+        tts_path = self._tts_cache[1] if self._tts_cache and self._tts_cache[0] == text else ""
+        self.vocab_mgr.add(text, self._last_md, tts_path)
+        self.status_label.setText("已加入生词本 ✓")
+        if self._vocab_window and self._vocab_window.isVisible():
+            self._vocab_window.refresh()
+
+    def _on_vocab_click(self):
+        self._play_sound("click")
+        if self._vocab_window is None:
+            from ui.vocab_window import VocabWindow
+            self._vocab_window = VocabWindow(self.vocab_mgr, self.tts)
+            _c = UIConfig()
+            self._vocab_window.setStyleSheet(build_style(_c.opacity, _c.is_light))
+        self._vocab_window.show_window()
+
     def _on_expand_click(self):
         if not self._last_md:
             self.status_label.setText("没有解析结果可展开")
@@ -606,4 +649,6 @@ class MainWindow(QWidget):
             self._result_window.close()
         if self._settings_dialog:
             self._settings_dialog.close()
+        if self._vocab_window:
+            self._vocab_window.close()
         super().closeEvent(event)

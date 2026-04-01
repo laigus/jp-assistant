@@ -44,6 +44,25 @@ _ICONS = {
         '<line x1="6" y1="6" x2="18" y2="18" stroke-width="2" stroke-linecap="round"/>'
         '<line x1="18" y1="6" x2="6" y2="18" stroke-width="2" stroke-linecap="round"/>'
     ),
+    "vocab": (
+        '<path d="M4 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" '
+        'fill="none" stroke-width="1.8"/>'
+        '<path d="M8 2v20" fill="none" stroke-width="1.2"/>'
+        '<line x1="12" y1="8" x2="16" y2="8" stroke-width="1.5" stroke-linecap="round"/>'
+        '<line x1="12" y1="12" x2="16" y2="12" stroke-width="1.5" stroke-linecap="round"/>'
+    ),
+    "vocab_add": (
+        '<path d="M4 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" '
+        'fill="none" stroke-width="1.8"/>'
+        '<path d="M8 2v20" fill="none" stroke-width="1.2"/>'
+        '<line x1="14" y1="9" x2="14" y2="15" stroke-width="1.8" stroke-linecap="round"/>'
+        '<line x1="11" y1="12" x2="17" y2="12" stroke-width="1.8" stroke-linecap="round"/>'
+    ),
+    "delete": (
+        '<polyline points="3 6 5 6 21 6" fill="none" stroke-width="1.8" stroke-linecap="round"/>'
+        '<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" fill="none" stroke-width="1.8"/>'
+        '<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" fill="none" stroke-width="1.8"/>'
+    ),
 }
 
 

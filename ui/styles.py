@@ -354,6 +354,18 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
     background: transparent;
 }}
+
+QWidget#vocabCard {{
+    background-color: rgba({bg_base}, {btn_bg});
+    border: 1px solid {border};
+    border-radius: 10px;
+    padding: 2px;
+}}
+
+QWidget#vocabCard:hover {{
+    background-color: rgba({bg_base}, {btn_hover});
+    border: 1px solid {border_hover};
+}}
 """
 
 
