@@ -355,16 +355,47 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
     background: transparent;
 }}
 
-QWidget#vocabCard {{
-    background-color: rgba({bg_base}, {btn_bg});
-    border: 1px solid {border};
-    border-radius: 10px;
-    padding: 2px;
+QLabel#vocabSentence {{
+    color: {fg_title};
+    font-size: 15px;
+    font-family: {FONT_JP};
+    background: transparent;
+    padding: 0;
 }}
 
-QWidget#vocabCard:hover {{
-    background-color: rgba({bg_base}, {btn_hover});
-    border: 1px solid {border_hover};
+QLabel#vocabMeta {{
+    color: {fg_status};
+    font-size: 10px;
+    background: transparent;
+    padding: 0;
+}}
+
+QPushButton#vocabIconBtn {{
+    background: transparent;
+    border: none;
+    border-radius: 14px;
+    min-width: 28px;
+    max-width: 28px;
+    min-height: 28px;
+    max-height: 28px;
+}}
+
+QPushButton#vocabIconBtn:hover {{
+    background-color: {icon_hover_bg};
+}}
+
+QPushButton#vocabDelBtn {{
+    background: transparent;
+    border: none;
+    border-radius: 14px;
+    min-width: 28px;
+    max-width: 28px;
+    min-height: 28px;
+    max-height: 28px;
+}}
+
+QPushButton#vocabDelBtn:hover {{
+    background-color: {close_hover_bg};
 }}
 """
 

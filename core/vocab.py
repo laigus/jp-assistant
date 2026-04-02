@@ -76,6 +76,11 @@ class VocabManager:
             self._entries.pop(index)
             self.save()
 
+    def remove_entry(self, entry: VocabEntry):
+        if entry in self._entries:
+            self._entries.remove(entry)
+            self.save()
+
     def entries(self) -> list[VocabEntry]:
         return list(self._entries)
 
