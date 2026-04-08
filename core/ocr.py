@@ -1,11 +1,16 @@
 """Japanese OCR using meikiocr — high-speed game text recognition."""
 import os
 import threading
+import time
+import traceback
 
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 from PIL import Image
 import numpy as np
+
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # seconds
 
 
 class JapaneseOCR:
@@ -27,15 +32,24 @@ class JapaneseOCR:
 
     def _load(self):
         try:
-            print("[OCR] Loading meikiocr engine...")
-            from meikiocr import MeikiOCR
-            with self._lock:
-                if self._engine is None:
-                    self._engine = MeikiOCR()
-            print("[OCR] Engine loaded successfully")
-        except Exception as e:
-            self._error = str(e)
-            print(f"[OCR] Engine load failed: {e}")
+            for attempt in range(1, MAX_RETRIES + 1):
+                try:
+                    print(f"[OCR] Loading meikiocr engine (attempt {attempt}/{MAX_RETRIES})...")
+                    from meikiocr import MeikiOCR
+                    with self._lock:
+                        if self._engine is None:
+                            self._engine = MeikiOCR()
+                    self._error = None
+                    print("[OCR] Engine loaded successfully")
+                    return
+                except Exception as e:
+                    tb = traceback.format_exc()
+                    self._error = f"{e}\n{tb}"
+                    print(f"[OCR] Load attempt {attempt} failed: {e}")
+                    if attempt < MAX_RETRIES:
+                        print(f"[OCR] Retrying in {RETRY_DELAY}s...")
+                        time.sleep(RETRY_DELAY)
+            print(f"[OCR] All {MAX_RETRIES} attempts failed")
         finally:
             self._loaded.set()
 
@@ -59,3 +73,7 @@ class JapaneseOCR:
     @property
     def is_ready(self) -> bool:
         return self._engine is not None
+
+    @property
+    def error(self) -> str | None:
+        return self._error
