@@ -65,9 +65,9 @@ alwaysApply: true
 - **Acrylic 开关**：可关闭磨砂模糊效果，保留纯透明 + 圆角阴影
 - **SVG 图标**：自定义 SVG 路径渲染，颜色随主题自适应
 - `QThread` 子线程执行 OCR/分析/TTS，完成后自动清理避免内存泄漏
-- `QTextBrowser` 显示 Markdown 渲染后的 HTML，详情窗口支持 Ctrl+滚轮缩放
+- `QTextBrowser` 显示 Markdown 渲染后的 HTML，详情窗口支持 Ctrl+滚轮缩放；重新解析或刷新内容时保留当前缩放比例
 - `QSoundEffect` 播放按钮音效，`QMediaPlayer` 播放 TTS
-- **窗口位置记忆**：主窗口和弹窗位置在关闭时保存，下次启动恢复
+- **窗口状态记忆**：主窗口和弹窗位置、详情窗口缩放比例在关闭时保存，下次启动恢复；详情窗口内容更新时不重置当前缩放比例
 
 ### 磨砂玻璃 — Windows DWM API
 
@@ -130,7 +130,7 @@ jp-assistant/
 2. **meikiocr ONNX 推理** — 不依赖 PyTorch，安装轻量（~40MB vs ~900MB），游戏文字准确率更高
 3. **Streaming 解析** — Ollama streaming 实时输出，每次 callback 重渲染 Markdown HTML
 4. **PromptManager** — system prompt 持久化到 data/prompts.json，支持 `{text}` 占位符和临时 prompt
-5. **弹窗复用** — ResultWindow 和 SettingsDialog 创建后复用，不重复创建；位置/缩放/模型选择均持久化到 ui_config.json
+5. **弹窗复用** — ResultWindow 和 SettingsDialog 创建后复用，不重复创建；详情窗口在内容更新时沿用当前缩放比例，并将位置/缩放/模型选择持久化到 ui_config.json
 6. **始终绘制背景** — paintEvent 中即使 acrylic 生效也要绘制低 alpha 填充，否则窗口点击穿透
 7. **response.close()** — Ollama streaming response 在 finally 中关闭，防止第二次请求挂起
 8. **窗口拖动** — 通过 mousePressEvent 检测 y < 44px 实现标题栏拖动

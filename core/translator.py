@@ -20,8 +20,8 @@ DEFAULT_PROVIDERS = {
         "type": "openai_compatible",
         "base_url": "https://api.deepseek.com",
         "api_key": "",
-        "models": ["deepseek-chat", "deepseek-reasoner"],
-        "default_model": "deepseek-chat",
+        "models": ["deepseek-v4-flash", "deepseek-v4-pro"],
+        "default_model": "deepseek-v4-flash",
     },
 }
 

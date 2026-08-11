@@ -13,8 +13,8 @@
       "type": "openai_compatible",
       "base_url": "https://api.deepseek.com",
       "api_key": "在此填入你的 DeepSeek API Key",
-      "models": ["deepseek-chat", "deepseek-reasoner"],
-      "default_model": "deepseek-chat"
+      "models": ["deepseek-v4-flash", "deepseek-v4-pro"],
+      "default_model": "deepseek-v4-flash"
     }
   },
   "active_provider": "deepseek"

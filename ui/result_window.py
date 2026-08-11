@@ -96,9 +96,13 @@ class ResultWindow(QWidget):
         self.update()
 
     def set_content(self, md_text: str):
-        """Store raw markdown and render with remembered zoom level."""
+        """Store raw markdown and render with the current zoom level.
+
+        The window is reused when a new analysis result arrives.  Keep the
+        live zoom value here; ``UIConfig.result_zoom`` is only the persisted
+        value and may still reflect the previous session until closeEvent.
+        """
         self._md_text = md_text
-        self._zoom_pct = UIConfig().result_zoom
         self.zoom_label.setText(f"{self._zoom_pct}%")
         scale = self._zoom_pct / 100.0
         html = md_to_html(md_text, large=True, font_scale=scale)
