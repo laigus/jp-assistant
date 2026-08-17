@@ -46,7 +46,6 @@ class UIConfig:
             cls._instance._acrylic_enabled = True
             cls._instance._chime_enabled = True
             cls._instance._window_pos = None
-            cls._instance._selected_model = ""
             cls._instance._result_pos = None
             cls._instance._result_zoom = 100
             cls._instance._load()
@@ -64,7 +63,6 @@ class UIConfig:
                 pos = data.get("window_pos")
                 if pos and len(pos) == 2:
                     self._window_pos = tuple(pos)
-                self._selected_model = data.get("selected_model", "")
                 rp = data.get("result_pos")
                 if rp and len(rp) == 2:
                     self._result_pos = tuple(rp)
@@ -83,8 +81,6 @@ class UIConfig:
             }
             if self._window_pos:
                 data["window_pos"] = list(self._window_pos)
-            if self._selected_model:
-                data["selected_model"] = self._selected_model
             if self._result_pos:
                 data["result_pos"] = list(self._result_pos)
             if self._result_zoom != 100:
@@ -155,14 +151,6 @@ class UIConfig:
     def window_pos(self, val):
         if val and len(val) == 2:
             self._window_pos = tuple(val)
-
-    @property
-    def selected_model(self) -> str:
-        return self._selected_model
-
-    @selected_model.setter
-    def selected_model(self, val: str):
-        self._selected_model = val or ""
 
     @property
     def result_pos(self):

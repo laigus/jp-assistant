@@ -134,6 +134,23 @@ QTextEdit:focus {{
     background-color: rgba({bg_base}, {te_focus});
 }}
 
+QLineEdit {{
+    background-color: rgba({bg_base}, {cb_bg});
+    color: {fg_dim};
+    border: 1px solid {border};
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 12px;
+    min-height: 22px;
+    selection-background-color: {sel_bg};
+}}
+
+QLineEdit:focus {{
+    color: {fg};
+    border: 1px solid {border_focus};
+    background-color: rgba({bg_base}, {btn_hover});
+}}
+
 QTextBrowser {{
     background-color: rgba({bg_base}, {tb_bg});
     color: {fg};

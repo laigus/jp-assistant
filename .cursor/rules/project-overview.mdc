@@ -13,7 +13,7 @@ alwaysApply: true
 |------|------|
 | UI | Python + PyQt6（无边框、Acrylic 磨砂、置顶、多主题、透明度可调） |
 | OCR | **meikiocr**（ONNX，专为日语游戏文字训练） |
-| 翻译+语法 | Ollama API（默认 deepseek-v3.1:671b-cloud） |
+| 翻译+语法 | Ollama、DeepSeek、自定义 OpenAI 兼容 API（streaming） |
 | TTS | edge-tts（微软 Edge 在线神经网络语音合成） |
 | 音效 | Qt QSoundEffect（Mixkit 免版权真实录音 WAV） |
 | Markdown | markdown 库转 HTML（支持字号缩放），QTextBrowser 渲染 |
@@ -47,13 +47,15 @@ alwaysApply: true
 - **流程**：发送文本 → 微软服务器合成 → 返回 MP3 流 → 保存临时文件 → Qt QMediaPlayer 播放
 - **特点**：免费、无需 API Key，但需要网络连接
 
-### 翻译与语法解析 — Ollama + LLM
+### 翻译与语法解析 — 多提供商 LLM
 
-通过 HTTP API 调用本地 Ollama 服务。
+`ModelsConfig` 管理内置 Ollama、DeepSeek 以及用户在设置中新增的多个 OpenAI 兼容 API。
 
 - **Ollama**：本地 LLM 运行器，在 `localhost:11434` 提供 REST API
-- **默认模型**：`deepseek-v3.1:671b-cloud`（云端代理模型，速度快质量好）
-- **通信**：`requests` 库 POST 到 `/api/chat`，streaming 模式逐段实时返回
+- **OpenAI 兼容 API**：每个提供商独立保存显示名称、API URL、API Key 和模型 ID
+- **自定义 URL**：接受 API 根地址、`/v1`/`/v4` 等版本化地址或完整 `/chat/completions` 地址，统一生成聊天与模型端点
+- **通信**：`requests` POST 到 `/api/chat` 或 OpenAI 兼容 `/chat/completions`，streaming 模式逐段实时返回
+- **配置持久化**：当前提供商及各提供商模型 ID 保存到 `data/models_config.json`
 - **Prompt 管理**：`PromptManager` 管理系统 Prompt + 临时 Prompt，持久化到 `data/prompts.json`
 - **关键细节**：streaming response 必须在 finally 中 close()，否则第二次请求挂起
 
@@ -86,13 +88,13 @@ alwaysApply: true
 | `Pillow` | 图片处理（PIL），截图 → OCR 格式转换 |
 | `numpy` | 数组运算，PIL Image ↔ OpenCV BGR 转换 |
 | `markdown` | Markdown → HTML 转换（tables/sane_lists 扩展） |
-| `requests` | HTTP 客户端，与 Ollama API 通信 |
+| `requests` | HTTP 客户端，与 Ollama 及 OpenAI 兼容 API 通信 |
 
 ### 数据流
 
 ```
 截图(mss) → 图片(PIL) → BGR array(numpy) → 文字识别(meikiocr ONNX)
-→ 翻译解析(Ollama + deepseek 云端模型) → 渲染显示(PyQt6 + markdown)
+→ 翻译解析(Ollama / DeepSeek / 自定义 API) → 渲染显示(PyQt6 + markdown)
 → 语音朗读(edge-tts 微软云端合成 → QMediaPlayer 播放)
 ```
 
@@ -109,18 +111,19 @@ jp-assistant/
 │   ├── styles.py        # QSS 样式表（动态生成，支持深浅主题 + 透明度）
 │   ├── md_render.py     # Markdown → styled HTML 转换（支持字号缩放）
 │   ├── result_window.py # 解析结果弹窗（大窗口查看，Ctrl+滚轮缩放）
-│   ├── settings_dialog.py # 设置面板（模型/Prompt/主题/透明度/Acrylic）
+│   ├── settings_dialog.py # 设置面板（提供商/URL/模型/Prompt/外观）
 │   ├── ui_config.py     # UI 配置单例（主题/透明度/Acrylic/窗口位置持久化）
 │   └── icons.py         # SVG 图标渲染（主题自适应颜色）
 ├── core/
 │   ├── ocr.py           # meikiocr 封装
-│   ├── translator.py    # Ollama 翻译 + 语法解析（streaming）
+│   ├── translator.py    # 多提供商翻译 + 语法解析（streaming）
 │   ├── prompt_manager.py# Prompt 存储/加载/临时 prompt
 │   └── tts.py           # edge-tts 语音合成
 ├── assets/
 │   ├── sounds/          # Mixkit 免版权 WAV 音效
 │   └── generate_sounds.py
-├── data/                # 运行时数据（prompts.json 等）
+├── tests/               # 无界面回归测试
+├── data/                # 运行时数据（models_config.json / prompts.json 等）
 └── requirements.txt
 ```
 
@@ -128,9 +131,9 @@ jp-assistant/
 
 1. **所有音频用 Qt 原生** — QSoundEffect（SFX）+ QMediaPlayer（TTS），避免 pygame 崩溃
 2. **meikiocr ONNX 推理** — 不依赖 PyTorch，安装轻量（~40MB vs ~900MB），游戏文字准确率更高
-3. **Streaming 解析** — Ollama streaming 实时输出，每次 callback 重渲染 Markdown HTML
+3. **Streaming 解析** — Ollama 与 OpenAI 兼容 API 均实时输出，每次 callback 重渲染 Markdown HTML
 4. **PromptManager** — system prompt 持久化到 data/prompts.json，支持 `{text}` 占位符和临时 prompt
-5. **弹窗复用** — ResultWindow 和 SettingsDialog 创建后复用，不重复创建；详情窗口在内容更新时沿用当前缩放比例，并将位置/缩放/模型选择持久化到 ui_config.json
+5. **配置职责分离** — UI 外观与窗口状态保存到 `ui_config.json`；提供商、URL、密钥和每个提供商的模型 ID 保存到 `models_config.json`
 6. **始终绘制背景** — paintEvent 中即使 acrylic 生效也要绘制低 alpha 填充，否则窗口点击穿透
 7. **response.close()** — Ollama streaming response 在 finally 中关闭，防止第二次请求挂起
 8. **窗口拖动** — 通过 mousePressEvent 检测 y < 44px 实现标题栏拖动

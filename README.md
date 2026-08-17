@@ -11,6 +11,7 @@
 - **Markdown 渲染** — 解析结果格式化显示，清晰易读
 - **语音朗读** — 高质量日语语音朗读识别到的文本
 - **多 API 后端** — 支持 Ollama、DeepSeek、OpenAI 及所有 OpenAI 兼容 API，在设置中一键切换
+- **自定义 API** — 在设置中新增任意 OpenAI 兼容 URL、API Key 与模型 ID，可保存多个配置
 - **Prompt 管理** — 自定义系统 Prompt，支持临时指令
 - **结果展开** — 一键弹出大窗口查看详细解析，支持 Ctrl+滚轮 / 按钮缩放文字；重新解析或更新内容时保留当前缩放比例
 - **多主题** — 暗黑、深蓝、纯白、浅蓝四种主题，实时切换
@@ -83,7 +84,7 @@ python -m venv .venv
 3. 识别结果可编辑，编辑后点击「解析」重新分析
 4. 点击「朗读」听日语发音
 5. 点击 ⤢ 按钮展开查看详细解析（Ctrl+滚轮缩放文字）；重新解析后窗口会继续使用当前放大比例
-6. 点击 ⚙ 按钮打开设置（模型、Prompt、主题、透明度、Acrylic 开关）
+6. 点击 ⚙ 按钮打开设置（API、模型、Prompt、主题、透明度、Acrylic 开关）
 7. 可在临时 Prompt 输入框中输入额外指令
 
 ## 模型配置
@@ -111,59 +112,16 @@ ollama pull qwen3:8b
 
 ### 添加新的 API 提供商
 
-编辑 `data/models_config.json`，在 `providers` 中添加新条目：
+1. 打开设置，在「API 提供商」右侧点击 **＋**。
+2. 填写显示名称、API URL、API Key（服务无需密钥时可留空）和模型 ID。
+3. 点击保存；新配置立即成为当前提供商，下次启动继续使用。
+4. 需要移除时选中该配置并点击 **−**；Ollama 和 DeepSeek 两个内置项会保留。
 
-```json
-{
-  "providers": {
-    "ollama": { "..." : "..." },
-    "deepseek": { "..." : "..." },
-    "openai": {
-      "name": "OpenAI",
-      "type": "openai_compatible",
-      "base_url": "https://api.openai.com",
-      "api_key": "sk-xxx",
-      "models": ["gpt-4o", "gpt-4o-mini", "o3-mini"],
-      "default_model": "gpt-4o-mini"
-    },
-    "qwen": {
-      "name": "通义千问",
-      "type": "openai_compatible",
-      "base_url": "https://dashscope.aliyuncs.com/compatible-mode",
-      "api_key": "sk-xxx",
-      "models": ["qwen-plus", "qwen-turbo", "qwen-max"],
-      "default_model": "qwen-plus"
-    },
-    "zhipu": {
-      "name": "智谱 GLM",
-      "type": "openai_compatible",
-      "base_url": "https://open.bigmodel.cn/api/paas",
-      "api_key": "xxx",
-      "models": ["glm-4-flash", "glm-4-plus"],
-      "default_model": "glm-4-flash"
-    },
-    "moonshot": {
-      "name": "Moonshot（Kimi）",
-      "type": "openai_compatible",
-      "base_url": "https://api.moonshot.cn",
-      "api_key": "sk-xxx",
-      "models": ["moonshot-v1-8k", "moonshot-v1-32k"],
-      "default_model": "moonshot-v1-8k"
-    }
-  },
-  "active_provider": "deepseek"
-}
-```
+API URL 支持以下三种写法，程序会自动生成正确的 OpenAI 兼容请求地址：
 
-**字段说明**：
+- API 根地址：`https://example.com`
+- 版本化 API 根地址：`https://example.com/v1`、`https://example.com/api/v4`
+- 完整聊天接口：`https://example.com/v1/chat/completions`
 
-| 字段 | 说明 |
-|------|------|
-| `name` | 在设置界面显示的名称 |
-| `type` | `ollama` 或 `openai_compatible`（所有支持 OpenAI 格式的 API 都用后者） |
-| `base_url` | API 地址（不需要加 `/v1/chat/completions`，程序会自动拼接） |
-| `api_key` | 你的 API Key（也可以在设置界面填写，会自动保存到此文件） |
-| `models` | 该提供商可用的模型列表 |
-| `default_model` | 默认选中的模型 |
-
-> 添加后重启程序即可在设置中看到新的提供商。
+自定义提供商与各自的模型 ID 保存在 `data/models_config.json`。示例结构见
+`models_config.example.json`。

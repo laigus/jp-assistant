@@ -14,12 +14,12 @@ alwaysApply: true
 - [x] 全局快捷键 Ctrl+Alt+S（右键/ESC 取消截图）
 - [x] OCR 文本可编辑后重新解析
 - [x] Markdown 格式化渲染解析结果
-- [x] 模型选择（设置面板，默认 deepseek-v3.1:671b-cloud）
+- [x] 多提供商模型选择（Ollama / DeepSeek / 自定义 OpenAI 兼容 API）
 - [x] Prompt 管理（编辑系统 prompt + 临时 prompt）
 - [x] 字体优化（Yu Gothic UI / Meiryo / Microsoft YaHei UI）
 - [x] 解析结果弹窗展开（支持 Ctrl+滚轮/按钮缩放，内容更新不重置，记忆缩放比例）
 - [x] 深色磨砂玻璃主题 UI
-- [x] 设置面板集中管理（模型 + Prompt + 外观）
+- [x] 设置面板集中管理（提供商 + URL + API Key + 模型 ID + Prompt + 外观）
 - [x] OCR 引擎从 manga-ocr 切换为 meikiocr（节省 ~900MB 依赖空间）
 - [x] 多主题支持（暗黑、深蓝、纯白、浅蓝）
 - [x] 透明度可调（0-100% 滑块）
@@ -28,7 +28,8 @@ alwaysApply: true
 - [x] 切换主题全链路刷新（样式/图标/HTML/Acrylic）
 - [x] 主窗口位置记忆（关闭时保存，启动时恢复）
 - [x] 详情窗口位置/缩放持久化（跨重启保持）
-- [x] 模型选择持久化 + 云端模型列表自动获取（sorted）
+- [x] 每个提供商的模型 ID 持久化 + Ollama 云端模型列表自动获取（sorted）
+- [x] 自定义 API 新增/删除（支持根 URL、版本化 URL 和完整聊天接口 URL）
 - [x] Worker 线程自动清理（防止内存泄漏）
 - [x] 无用导入清理
 - [x] 生词本功能（一键添加原句/解析/音频，列表查看，点击朗读，叉叉删除）

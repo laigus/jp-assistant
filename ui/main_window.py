@@ -125,10 +125,8 @@ class MainWindow(QWidget):
         super().__init__()
         self.ocr_engine = ocr_engine
         self.models_cfg = ModelsConfig()
-        saved_model = UIConfig().selected_model
         self.analyzer = GrammarAnalyzer(
             provider_key=self.models_cfg.active_provider,
-            model=saved_model,
             models_cfg=self.models_cfg,
         )
         self.tts = TextToSpeech()

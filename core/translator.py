@@ -1,6 +1,10 @@
 """Translation and grammar analysis via multiple LLM backends."""
+import copy
 import json
 import os
+import re
+from urllib.parse import urlsplit
+
 import requests
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
@@ -25,6 +29,32 @@ DEFAULT_PROVIDERS = {
     },
 }
 
+BUILTIN_PROVIDER_KEYS = frozenset(DEFAULT_PROVIDERS)
+
+
+def build_openai_endpoint(base_url: str, endpoint: str) -> str:
+    """Build an OpenAI-compatible endpoint from a base or full API URL."""
+    base = (base_url or "").strip().rstrip("/")
+    endpoint = endpoint.strip("/")
+    if not base:
+        return ""
+
+    for known_endpoint in ("chat/completions", "models"):
+        suffix = f"/{known_endpoint}"
+        if base.endswith(suffix):
+            if endpoint == known_endpoint:
+                return base
+            return f"{base[:-len(suffix)]}/{endpoint}"
+
+    path_segments = [segment for segment in urlsplit(base).path.split("/") if segment]
+    has_version_segment = any(
+        re.fullmatch(r"v\d+(?:beta\d*)?", segment, flags=re.IGNORECASE)
+        for segment in path_segments
+    )
+    if has_version_segment:
+        return f"{base}/{endpoint}"
+    return f"{base}/v1/{endpoint}"
+
 
 class ModelsConfig:
     """Load / save multi-provider model configuration."""
@@ -39,17 +69,23 @@ class ModelsConfig:
             try:
                 with open(_MODELS_CONFIG, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                self.providers = data.get("providers", {})
-                self.active_provider = data.get("active_provider", "ollama")
-                return
+                providers = data.get("providers", {})
+                if isinstance(providers, dict) and providers:
+                    self.providers = providers
+                    active = data.get("active_provider", "ollama")
+                    self.active_provider = (
+                        active if active in providers else next(iter(providers))
+                    )
+                    return
             except Exception:
                 pass
-        import copy
         self.providers = copy.deepcopy(DEFAULT_PROVIDERS)
         self.active_provider = "ollama"
         self.save()
 
     def save(self):
+        if self.active_provider not in self.providers:
+            self.active_provider = next(iter(self.providers), "ollama")
         os.makedirs(_DATA_DIR, exist_ok=True)
         with open(_MODELS_CONFIG, "w", encoding="utf-8") as f:
             json.dump(
@@ -67,15 +103,51 @@ class ModelsConfig:
     def provider_display_name(self, key: str) -> str:
         return self.providers.get(key, {}).get("name", key)
 
+    @staticmethod
+    def is_builtin_provider(key: str) -> bool:
+        return key in BUILTIN_PROVIDER_KEYS
+
+    def is_custom_provider(self, key: str) -> bool:
+        return bool(key) and not self.is_builtin_provider(key)
+
+    def next_custom_provider_key(self) -> str:
+        key = "custom"
+        suffix = 2
+        while key in self.providers:
+            key = f"custom_{suffix}"
+            suffix += 1
+        return key
+
+    def create_custom_provider(self) -> str:
+        key = self.next_custom_provider_key()
+        custom_count = sum(
+            1 for provider_key in self.providers
+            if self.is_custom_provider(provider_key)
+        )
+        display_name = "自定义 API" if custom_count == 0 else f"自定义 API {custom_count + 1}"
+        self.providers[key] = {
+            "name": display_name,
+            "type": "openai_compatible",
+            "base_url": "",
+            "api_key": "",
+            "models": [],
+            "default_model": "",
+        }
+        return key
+
     def add_provider(self, key: str, cfg: dict):
         self.providers[key] = cfg
-        self.save()
 
-    def remove_provider(self, key: str):
+    def remove_provider(self, key: str) -> bool:
+        if self.is_builtin_provider(key):
+            return False
         self.providers.pop(key, None)
         if self.active_provider == key:
-            self.active_provider = next(iter(self.providers), "ollama")
-        self.save()
+            self.active_provider = (
+                "ollama" if "ollama" in self.providers
+                else next(iter(self.providers), "ollama")
+            )
+        return True
 
 
 class GrammarAnalyzer:
@@ -97,6 +169,7 @@ class GrammarAnalyzer:
 
     def switch_provider(self, provider_key: str, model: str = ""):
         self.provider_key = provider_key
+        self._cfg.active_provider = provider_key
         prov = self._cfg.get_provider(provider_key)
         self._apply_provider(prov)
         self.model = model or prov.get("default_model", "")
@@ -105,6 +178,10 @@ class GrammarAnalyzer:
 
     def analyze(self, prompt: str, callback=None, cancel_check=None):
         """Stream analysis; auto-dispatches to Ollama or OpenAI-compatible backend."""
+        if not self.model.strip():
+            return "❌ 请在设置中填写模型 ID"
+        if not self._base_url.strip():
+            return "❌ 请在设置中填写 API URL"
         if self._type == "ollama":
             return self._analyze_ollama(prompt, callback, cancel_check)
         return self._analyze_openai(prompt, callback, cancel_check)
@@ -165,7 +242,7 @@ class GrammarAnalyzer:
             "max_tokens": 8192,
         }
 
-        url = self._base_url.rstrip("/") + "/v1/chat/completions"
+        url = build_openai_endpoint(self._base_url, "chat/completions")
         resp = None
         try:
             resp = self._session.post(
@@ -190,7 +267,10 @@ class GrammarAnalyzer:
                     data = json.loads(text)
                 except json.JSONDecodeError:
                     continue
-                delta = data.get("choices", [{}])[0].get("delta", {})
+                choices = data.get("choices")
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
                 content = delta.get("content", "")
                 reasoning = delta.get("reasoning_content", "")
                 if content:
@@ -263,7 +343,7 @@ class GrammarAnalyzer:
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         try:
-            url = self._base_url.rstrip("/") + "/v1/models"
+            url = build_openai_endpoint(self._base_url, "models")
             resp = self._session.get(url, headers=headers, timeout=5)
             return resp.status_code == 200
         except Exception:

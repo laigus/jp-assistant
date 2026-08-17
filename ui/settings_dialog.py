@@ -1,4 +1,7 @@
 """Settings dialog — provider / model selection, API key, prompt management."""
+import copy
+from urllib.parse import urlparse
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QTextEdit, QApplication, QSizePolicy, QComboBox, QSlider, QCheckBox,
@@ -26,6 +29,11 @@ class SettingsDialog(QWidget):
         self._acrylic_applied = False
         self._ollama_local: list[str] = []
         self._ollama_cloud: list[str] = []
+        self._editing_provider_key = ""
+        self._loading_provider = False
+        self._provider_snapshot = None
+        self._active_provider_snapshot = ""
+        self._saved_this_session = False
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -33,7 +41,7 @@ class SettingsDialog(QWidget):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.resize(520, 640)
+        self.resize(540, 740)
         self._build_ui()
 
     def _build_ui(self):
@@ -66,7 +74,38 @@ class SettingsDialog(QWidget):
         self.provider_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         prov_row.addWidget(self.provider_combo)
+
+        self.add_provider_btn = QPushButton("＋")
+        self.add_provider_btn.setObjectName("iconBtn")
+        self.add_provider_btn.setToolTip("新增自定义 API")
+        self.add_provider_btn.clicked.connect(self._on_add_provider)
+        prov_row.addWidget(self.add_provider_btn)
+
+        self.remove_provider_btn = QPushButton("−")
+        self.remove_provider_btn.setObjectName("iconBtn")
+        self.remove_provider_btn.setToolTip("删除当前自定义 API")
+        self.remove_provider_btn.clicked.connect(self._on_remove_provider)
+        prov_row.addWidget(self.remove_provider_btn)
         layout.addLayout(prov_row)
+
+        # --- custom provider name ---
+        self.provider_name_label = QLabel("显示名称")
+        self.provider_name_label.setObjectName("sectionLabel")
+        layout.addWidget(self.provider_name_label)
+
+        self.provider_name_edit = QLineEdit()
+        self.provider_name_edit.setPlaceholderText("例如：公司网关")
+        layout.addWidget(self.provider_name_edit)
+
+        # --- custom API URL ---
+        self.apiurl_label = QLabel("API URL")
+        self.apiurl_label.setObjectName("sectionLabel")
+        layout.addWidget(self.apiurl_label)
+
+        self.apiurl_edit = QLineEdit()
+        self.apiurl_edit.setPlaceholderText("例如：https://example.com/v1")
+        self.apiurl_edit.setToolTip("支持 API 根地址、版本化地址或完整 /chat/completions 地址")
+        layout.addWidget(self.apiurl_edit)
 
         # --- API key ---
         self.apikey_label = QLabel("API Key")
@@ -87,9 +126,9 @@ class SettingsDialog(QWidget):
         layout.addLayout(apikey_row)
 
         # --- model section ---
-        model_label = QLabel("分析模型")
-        model_label.setObjectName("sectionLabel")
-        layout.addWidget(model_label)
+        self.model_label = QLabel("分析模型")
+        self.model_label.setObjectName("sectionLabel")
+        layout.addWidget(self.model_label)
 
         self.model_combo = QComboBox()
         self.model_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -183,7 +222,7 @@ class SettingsDialog(QWidget):
 
     @property
     def current_model(self) -> str:
-        return self.model_combo.currentText()
+        return self.model_combo.currentText().strip()
 
     def set_ollama_models(self, local: list[str], cloud: list[str]):
         """Cache Ollama model lists (fetched async from main_window)."""
@@ -193,6 +232,7 @@ class SettingsDialog(QWidget):
             self._populate_model_combo()
 
     def show_dialog(self):
+        self._begin_provider_edit_session()
         self.prompt_edit.setPlainText(self.pm.system_prompt)
         cfg = UIConfig()
         self.opacity_slider.setValue(cfg.opacity)
@@ -218,25 +258,68 @@ class SettingsDialog(QWidget):
 
     # --- internal ---
 
-    def _refresh_providers(self):
+    def _begin_provider_edit_session(self):
+        self._provider_snapshot = copy.deepcopy(self.models_cfg.providers)
+        self._active_provider_snapshot = self.models_cfg.active_provider
+        self._editing_provider_key = ""
+        self._saved_this_session = False
+
+    def _restore_provider_snapshot(self):
+        if self._provider_snapshot is None:
+            return
+        self.models_cfg.providers = copy.deepcopy(self._provider_snapshot)
+        self.models_cfg.active_provider = self._active_provider_snapshot
+        self._provider_snapshot = None
+        self._editing_provider_key = ""
+
+    def _refresh_providers(self, selected_key: str = ""):
+        self._loading_provider = True
         self.provider_combo.blockSignals(True)
         self.provider_combo.clear()
         for key in self.models_cfg.provider_keys():
             display = self.models_cfg.provider_display_name(key)
             self.provider_combo.addItem(display, key)
-        active = self.models_cfg.active_provider
-        idx = self.provider_combo.findData(active)
+        target = selected_key or self.models_cfg.active_provider
+        idx = self.provider_combo.findData(target)
         if idx >= 0:
             self.provider_combo.setCurrentIndex(idx)
+        elif self.provider_combo.count():
+            self.provider_combo.setCurrentIndex(0)
         self.provider_combo.blockSignals(False)
-        self._on_provider_changed()
+        self._loading_provider = False
+        self._load_provider_fields(self.current_provider_key)
 
     def _on_provider_changed(self):
+        if self._loading_provider:
+            return
         key = self.current_provider_key
+        if not key:
+            return
+        if self._editing_provider_key and self._editing_provider_key != key:
+            self._store_provider_fields(self._editing_provider_key)
+        self._load_provider_fields(key)
+
+    def _load_provider_fields(self, key: str):
         if not key:
             return
         prov = self.models_cfg.get_provider(key)
         ptype = prov.get("type", "ollama")
+        is_custom = self.models_cfg.is_custom_provider(key)
+
+        self.provider_name_label.setVisible(is_custom)
+        self.provider_name_edit.setVisible(is_custom)
+        self.apiurl_label.setVisible(is_custom)
+        self.apiurl_edit.setVisible(is_custom)
+        self.remove_provider_btn.setEnabled(is_custom)
+        self.remove_provider_btn.setToolTip(
+            "删除当前自定义 API" if is_custom else "内置提供商保留"
+        )
+        if is_custom:
+            self.provider_name_edit.setText(prov.get("name", key))
+            self.apiurl_edit.setText(prov.get("base_url", ""))
+        else:
+            self.provider_name_edit.clear()
+            self.apiurl_edit.clear()
 
         needs_key = ptype != "ollama"
         self.apikey_label.setVisible(needs_key)
@@ -248,12 +331,90 @@ class SettingsDialog(QWidget):
             self.apikey_edit.clear()
 
         self.model_combo.setEditable(ptype != "ollama")
+        self.model_label.setText("模型 ID" if is_custom else "分析模型")
         self._populate_model_combo()
+        if self.model_combo.isEditable() and self.model_combo.lineEdit():
+            self.model_combo.lineEdit().setPlaceholderText("输入模型 ID")
+        self._editing_provider_key = key
+
+    def _store_provider_fields(self, key: str):
+        if not key:
+            return
+        prov = self.models_cfg.get_provider(key)
+        if not prov or prov.get("type", "ollama") == "ollama":
+            return
+
+        prov["api_key"] = self.apikey_edit.text().strip()
+        model_id = self.current_model
+        if self.models_cfg.is_custom_provider(key):
+            prov["name"] = self.provider_name_edit.text().strip()
+            prov["base_url"] = self.apiurl_edit.text().strip().rstrip("/")
+            prov["models"] = [model_id] if model_id else []
+            idx = self.provider_combo.findData(key)
+            if idx >= 0:
+                self.provider_combo.setItemText(idx, prov["name"] or key)
+        elif model_id:
+            models = list(prov.get("models", []))
+            if model_id not in models:
+                models.append(model_id)
+            prov["models"] = models
+        prov["default_model"] = model_id
+
+    def _on_add_provider(self, _checked=False):
+        self._store_provider_fields(self._editing_provider_key)
+        key = self.models_cfg.create_custom_provider()
+        self._refresh_providers(key)
+        self.provider_name_edit.selectAll()
+        self.provider_name_edit.setFocus()
+
+    def _on_remove_provider(self, _checked=False, *, confirm: bool = True):
+        key = self.current_provider_key
+        if not self.models_cfg.is_custom_provider(key):
+            return
+        if confirm:
+            answer = QMessageBox.question(
+                self,
+                "删除自定义 API",
+                f"确定删除“{self.models_cfg.provider_display_name(key)}”吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self._editing_provider_key = ""
+        self.models_cfg.remove_provider(key)
+        self._refresh_providers(self.models_cfg.active_provider)
+
+    def _validate_custom_providers(self) -> bool:
+        for key in self.models_cfg.provider_keys():
+            if not self.models_cfg.is_custom_provider(key):
+                continue
+            prov = self.models_cfg.get_provider(key)
+            name = prov.get("name", "").strip()
+            base_url = prov.get("base_url", "").strip()
+            model_id = prov.get("default_model", "").strip()
+            error = ""
+            if not name:
+                error = "请填写显示名称"
+            elif not base_url:
+                error = "请填写 API URL"
+            else:
+                parsed = urlparse(base_url)
+                if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                    error = "API URL 需以 http:// 或 https:// 开头"
+            if not error and not model_id:
+                error = "请填写模型 ID"
+            if error:
+                self._refresh_providers(key)
+                QMessageBox.warning(self, "自定义 API 配置不完整", error)
+                return False
+        return True
 
     def _populate_model_combo(self):
         key = self.current_provider_key
         prov = self.models_cfg.get_provider(key)
         ptype = prov.get("type", "ollama")
+        default = prov.get("default_model", "")
 
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
@@ -261,7 +422,7 @@ class SettingsDialog(QWidget):
         if ptype == "ollama":
             local = list(self._ollama_local)
             cloud = list(self._ollama_cloud)
-            default = prov.get("default_model", "deepseek-v3.1:671b-cloud")
+            default = default or "deepseek-v3.1:671b-cloud"
             if default and default not in local and default not in cloud:
                 cloud.insert(0, default)
 
@@ -288,12 +449,15 @@ class SettingsDialog(QWidget):
         else:
             for m in prov.get("models", []):
                 self.model_combo.addItem(m)
+            if default and self.model_combo.findText(default) < 0:
+                self.model_combo.addItem(default)
 
-        saved = UIConfig().selected_model
-        if key == self.models_cfg.active_provider and saved:
-            idx = self.model_combo.findText(saved)
+        if default:
+            idx = self.model_combo.findText(default)
             if idx >= 0:
                 self.model_combo.setCurrentIndex(idx)
+            elif self.model_combo.isEditable():
+                self.model_combo.setEditText(default)
 
         self.model_combo.blockSignals(False)
 
@@ -306,6 +470,10 @@ class SettingsDialog(QWidget):
             self.apikey_toggle.setText("👁")
 
     def _on_save(self):
+        self._store_provider_fields(self._editing_provider_key)
+        if not self._validate_custom_providers():
+            return
+
         self.pm.system_prompt = self.prompt_edit.toPlainText()
         self.pm.save()
 
@@ -314,17 +482,15 @@ class SettingsDialog(QWidget):
         cfg.theme = self.theme_combo.currentData()
         cfg.acrylic_enabled = self.acrylic_check.isChecked()
         cfg.chime_enabled = self.chime_check.isChecked()
-        cfg.selected_model = self.model_combo.currentText()
         cfg.save()
 
         prov_key = self.current_provider_key
         if prov_key:
-            prov = self.models_cfg.get_provider(prov_key)
-            if prov.get("type", "ollama") != "ollama":
-                prov["api_key"] = self.apikey_edit.text().strip()
             self.models_cfg.active_provider = prov_key
             self.models_cfg.save()
 
+        self._saved_this_session = True
+        self._provider_snapshot = None
         self.settings_changed.emit()
         self.close()
 
@@ -334,6 +500,8 @@ class SettingsDialog(QWidget):
 
     def closeEvent(self, event):
         SettingsDialog._saved_pos = self.pos()
+        if not self._saved_this_session:
+            self._restore_provider_snapshot()
         self._acrylic_applied = False
         super().closeEvent(event)
 
