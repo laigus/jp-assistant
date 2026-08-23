@@ -275,7 +275,7 @@ QComboBox {{
     color: {fg_dim};
     border: 1px solid {border};
     border-radius: 8px;
-    padding: 5px 10px;
+    padding: 5px 32px 5px 10px;
     font-size: 12px;
     min-height: 22px;
 }}
@@ -286,12 +286,8 @@ QComboBox:hover {{
 
 QComboBox::drop-down {{
     border: none;
-    width: 20px;
-}}
-
-QComboBox::down-arrow {{
-    image: none;
-    border: none;
+    border-left: 1px solid {border};
+    width: 28px;
 }}
 
 QComboBox QAbstractItemView {{

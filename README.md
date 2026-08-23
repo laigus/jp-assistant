@@ -11,8 +11,9 @@
 - **Markdown 渲染** — 解析结果格式化显示，清晰易读
 - **语音朗读** — 高质量日语语音朗读识别到的文本
 - **多 API 后端** — 支持 Ollama、DeepSeek、OpenAI 及所有 OpenAI 兼容 API，在设置中一键切换
-- **自定义 API** — 在设置中新增任意 OpenAI 兼容 URL、API Key 与模型 ID，可保存多个配置
+- **自定义 API** — 可保存多个 OpenAI 兼容配置；模型列表支持从 API 自动获取，也可直接手动输入模型 ID
 - **Prompt 管理** — 自定义系统 Prompt，支持临时指令
+- **生词本** — 保存原句、解析和语音，支持查看、朗读与删除
 - **结果展开** — 一键弹出大窗口查看详细解析，支持 Ctrl+滚轮 / 按钮缩放文字；重新解析或更新内容时保留当前缩放比例
 - **多主题** — 暗黑、深蓝、纯白、浅蓝四种主题，实时切换
 - **透明度可调** — 0-100% 滑块控制界面透明度
@@ -32,10 +33,6 @@
 | 热键 | keyboard 库（全局热键 Ctrl+Alt+S） |
 | 磨砂效果 | Windows DWM API（ctypes 调用 user32/dwmapi） |
 
-> **备选 OCR 方案**：manga-ocr（基于 PyTorch + Transformers 的漫画专用 OCR）。
-> 如需切换回 manga-ocr，安装 `pip install manga-ocr` 并修改 `core/ocr.py` 即可。
-> manga-ocr 依赖 PyTorch（~443MB），适合漫画短句识别，但长文本准确率较低。
-
 ## 环境要求
 
 - Windows 10/11
@@ -47,14 +44,14 @@
 
 ## 安装
 
-```bash
-cd d:\AI\jp-assistant
+在项目根目录执行：
 
+```bash
 # 创建虚拟环境（如果还没有）
-python -m venv .venv
+uv venv .venv
 
 # 安装依赖
-.venv\Scripts\pip.exe install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+uv pip install --python .venv\Scripts\python.exe -r requirements.txt
 ```
 
 > 首次启动会自动下载 meikiocr 模型（检测 ~14MB + 识别 ~30MB），使用 HuggingFace 下载。
@@ -95,7 +92,7 @@ python -m venv .venv
 2. 启动程序后点击 ⚙ 设置
 3. 在「API 提供商」下拉框选择 **DeepSeek**
 4. 填入你的 API Key
-5. 选择模型（`deepseek-v4-flash` 日常够用，`deepseek-v4-pro` 更强但更慢）
+5. 点击「获取模型」后选择模型，或直接手动输入模型 ID
 6. 点击保存
 
 ### 使用 Ollama 本地模型
@@ -108,14 +105,15 @@ $env:OLLAMA_MODELS = "D:\AI\models"
 ollama pull qwen3:8b
 ```
 
-在设置中选择 **Ollama（本地）** 提供商，然后选择模型即可。
+在设置中选择 **Ollama（本地）** 提供商，点击「获取模型」刷新本地列表后选择；也可直接输入模型 ID。
 
 ### 添加新的 API 提供商
 
 1. 打开设置，在「API 提供商」右侧点击 **＋**。
-2. 填写显示名称、API URL、API Key（服务无需密钥时可留空）和模型 ID。
-3. 点击保存；新配置立即成为当前提供商，下次启动继续使用。
-4. 需要移除时选中该配置并点击 **−**；Ollama 和 DeepSeek 两个内置项会保留。
+2. 填写显示名称、API URL 和 API Key（服务无需密钥时可留空）。
+3. 点击「获取模型」，完成后会以 API 返回结果刷新并展开带箭头的下拉列表；旧列表项不会混入结果。选择其中一项，或随后在同一输入框手动填写模型 ID。
+4. 点击保存；新配置立即成为当前提供商，下次启动继续使用。
+5. 需要移除时选中该配置并点击 **−**；Ollama 和 DeepSeek 两个内置项会保留。
 
 API URL 支持以下三种写法，程序会自动生成正确的 OpenAI 兼容请求地址：
 
@@ -123,5 +121,11 @@ API URL 支持以下三种写法，程序会自动生成正确的 OpenAI 兼容�
 - 版本化 API 根地址：`https://example.com/v1`、`https://example.com/api/v4`
 - 完整聊天接口：`https://example.com/v1/chat/completions`
 
-自定义提供商与各自的模型 ID 保存在 `data/models_config.json`。示例结构见
+自动获取的模型列表、手动输入的模型 ID 及当前选择都会按提供商保存在 `data/models_config.json`。示例结构见
 `models_config.example.json`。
+
+## 开发文档
+
+- [项目架构](docs/architecture.md)
+- [Roadmap](docs/roadmap.md)
+- 项目协作约定见根目录 `AGENTS.md`

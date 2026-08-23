@@ -12,7 +12,12 @@ from PyQt6.QtWidgets import QApplication
 import core.translator as translator_module
 import ui.ui_config as ui_config_module
 from core.prompt_manager import PromptManager
-from core.translator import GrammarAnalyzer, ModelsConfig, build_openai_endpoint
+from core.translator import (
+    GrammarAnalyzer,
+    ModelsConfig,
+    build_openai_endpoint,
+    fetch_provider_models,
+)
 from ui.settings_dialog import SettingsDialog
 
 
@@ -28,6 +33,23 @@ class FakeStreamingResponse:
     def iter_lines(self):
         yield b'data: {"choices":[{"delta":{"content":"ok"}}]}'
         yield b"data: [DONE]"
+
+    def close(self):
+        self.closed = True
+
+
+class FakeJsonResponse:
+    status_code = 200
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.closed = False
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.payload
 
     def close(self):
         self.closed = True
@@ -94,6 +116,86 @@ class CustomProviderTests(unittest.TestCase):
                 "https://gateway.example/v1/chat/completions", "models"
             ),
             "https://gateway.example/v1/models",
+        )
+
+    def test_fetch_openai_compatible_models_uses_url_key_and_sorted_ids(self):
+        response = FakeJsonResponse(
+            {
+                "data": [
+                    {"id": "model-z"},
+                    {"id": "model-a"},
+                    {"id": "model-z"},
+                ]
+            }
+        )
+        session = Mock()
+        session.get.return_value = response
+
+        models = fetch_provider_models(
+            {
+                "type": "openai_compatible",
+                "base_url": "https://gateway.example/v1/chat/completions",
+                "api_key": "test-token",
+            },
+            session=session,
+        )
+
+        self.assertEqual(models, ["model-a", "model-z"])
+        self.assertTrue(response.closed)
+        call = session.get.call_args
+        self.assertEqual(call.args[0], "https://gateway.example/v1/models")
+        self.assertEqual(
+            call.kwargs["headers"]["Authorization"], "Bearer test-token"
+        )
+        self.assertEqual(call.kwargs["timeout"], 10)
+
+    def test_fetch_button_populates_editable_model_list(self):
+        dialog = self.make_dialog()
+        dialog._on_add_provider()
+        custom_key = dialog.current_provider_key
+        dialog.provider_name_edit.setText("Custom Gateway")
+        dialog.apiurl_edit.setText("https://gateway.example/v1")
+        dialog.apikey_edit.setText("test-token")
+        dialog.model_combo.setEditText("legacy-model")
+
+        with (
+            patch(
+                "ui.settings_dialog.fetch_provider_models",
+                return_value=["auto-model-a", "auto-model-b"],
+            ) as fetch_mock,
+            patch.object(dialog.model_combo, "showPopup") as popup_mock,
+        ):
+            dialog._on_fetch_models()
+            worker = dialog._model_fetch_worker
+            self.assertIsNotNone(worker)
+            self.assertTrue(worker.wait(2000))
+            for _ in range(3):
+                self.app.processEvents()
+
+        fetch_mock.assert_called_once()
+        fetched_provider = fetch_mock.call_args.args[0]
+        self.assertEqual(
+            fetched_provider["base_url"], "https://gateway.example/v1"
+        )
+        self.assertEqual(fetched_provider["api_key"], "test-token")
+        self.assertEqual(dialog.current_model, "auto-model-a")
+        self.assertEqual(
+            self.models_cfg.get_provider(custom_key)["models"],
+            ["auto-model-a", "auto-model-b"],
+        )
+        self.assertNotIn(
+            "legacy-model",
+            self.models_cfg.get_provider(custom_key)["models"],
+        )
+        self.assertTrue(dialog.model_combo.isEditable())
+        self.assertGreaterEqual(dialog.model_combo.findText("auto-model-b"), 0)
+        self.assertTrue(dialog.fetch_models_btn.isEnabled())
+        popup_mock.assert_called_once_with()
+        dialog.model_combo.setEditText("manual-model")
+        dialog._store_provider_fields(custom_key)
+        self.assertEqual(
+            self.models_cfg.get_provider(custom_key)["models"],
+            ["auto-model-a", "auto-model-b", "manual-model"],
         )
 
     def test_add_save_use_and_remove_custom_provider(self):

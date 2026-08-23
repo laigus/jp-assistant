@@ -56,6 +56,96 @@ def build_openai_endpoint(base_url: str, endpoint: str) -> str:
     return f"{base}/v1/{endpoint}"
 
 
+def _extract_model_ids(payload: object) -> list[str]:
+    """Extract model IDs from OpenAI-compatible and Ollama list responses."""
+    if isinstance(payload, dict):
+        items = payload.get("data")
+        if not isinstance(items, list):
+            items = payload.get("models")
+    elif isinstance(payload, list):
+        items = payload
+    else:
+        items = None
+
+    if not isinstance(items, list):
+        return []
+
+    model_ids: list[str] = []
+    for item in items:
+        model_id = ""
+        if isinstance(item, str):
+            model_id = item.strip()
+        elif isinstance(item, dict):
+            for field in ("id", "name", "model"):
+                value = item.get(field)
+                if isinstance(value, str) and value.strip():
+                    model_id = value.strip()
+                    break
+        if model_id and model_id not in model_ids:
+            model_ids.append(model_id)
+    return sorted(model_ids, key=str.casefold)
+
+
+def fetch_provider_models(
+    provider: dict,
+    session: requests.Session | None = None,
+    timeout: int = 10,
+) -> list[str]:
+    """Fetch model IDs from an Ollama or OpenAI-compatible provider."""
+    base_url = str(provider.get("base_url", "")).strip().rstrip("/")
+    if not base_url:
+        raise RuntimeError("请先填写 API URL")
+
+    provider_type = provider.get("type", "openai_compatible")
+    if provider_type == "ollama":
+        url = f"{base_url}/api/tags"
+    else:
+        url = build_openai_endpoint(base_url, "models")
+
+    headers = {}
+    api_key = str(provider.get("api_key", "")).strip()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    owns_session = session is None
+    client = session or requests.Session()
+    response = None
+    try:
+        response = client.get(url, headers=headers, timeout=timeout)
+        response.raise_for_status()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError("API 返回的模型列表不是有效 JSON") from exc
+
+        model_ids = _extract_model_ids(payload)
+        if not model_ids:
+            raise RuntimeError("API 未返回模型列表，请手动输入模型 ID")
+        return model_ids
+    except requests.exceptions.Timeout as exc:
+        raise RuntimeError("获取模型列表超时，请检查 API URL") from exc
+    except requests.exceptions.ConnectionError as exc:
+        raise RuntimeError("连接 API 失败，请检查 URL 与网络") from exc
+    except requests.exceptions.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else "?"
+        if status in {401, 403}:
+            message = "API Key 校验失败"
+        elif status == 404:
+            message = "API 未开放模型列表接口，请手动输入模型 ID"
+        elif status == 429:
+            message = "请求过于频繁，请稍后重试"
+        else:
+            message = f"获取模型列表失败（HTTP {status}）"
+        raise RuntimeError(message) from exc
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError("获取模型列表请求失败") from exc
+    finally:
+        if response is not None:
+            response.close()
+        if owns_session:
+            client.close()
+
+
 class ModelsConfig:
     """Load / save multi-provider model configuration."""
 
@@ -303,22 +393,24 @@ class GrammarAnalyzer:
     # ── model listing ──
 
     def list_models(self) -> list[str]:
-        """Return models for the current provider."""
+        """Fetch models from the current provider."""
+        return self.fetch_models()
+
+    def fetch_models(self) -> list[str]:
+        """Fetch models from the current provider's model-list endpoint."""
         prov = self._cfg.get_provider(self.provider_key)
-        if prov.get("type") == "ollama":
-            return self._list_ollama_models()
-        return prov.get("models", [])
+        return fetch_provider_models(prov, session=self._session)
 
     def _list_ollama_models(self) -> list[str]:
         ollama_prov = self._cfg.get_provider("ollama")
-        url = ollama_prov.get("base_url", "http://localhost:11434") if ollama_prov else "http://localhost:11434"
+        if not ollama_prov:
+            ollama_prov = copy.deepcopy(DEFAULT_PROVIDERS["ollama"])
         try:
-            resp = self._session.get(f"{url}/api/tags", timeout=5)
-            if resp.status_code == 200:
-                return [m["name"] for m in resp.json().get("models", [])]
+            return fetch_provider_models(
+                ollama_prov, session=self._session, timeout=5
+            )
         except Exception:
-            pass
-        return []
+            return []
 
     @staticmethod
     def list_cloud_models() -> list[str]:
@@ -333,18 +425,7 @@ class GrammarAnalyzer:
 
     def check_connection(self) -> bool:
         prov = self._cfg.get_provider(self.provider_key)
-        if prov.get("type") == "ollama":
-            try:
-                resp = self._session.get(f"{self._base_url}/api/tags", timeout=5)
-                return resp.status_code == 200
-            except Exception:
-                return False
-        headers = {}
-        if self._api_key:
-            headers["Authorization"] = f"Bearer {self._api_key}"
         try:
-            url = build_openai_endpoint(self._base_url, "models")
-            resp = self._session.get(url, headers=headers, timeout=5)
-            return resp.status_code == 200
+            return bool(fetch_provider_models(prov, session=self._session, timeout=5))
         except Exception:
             return False
