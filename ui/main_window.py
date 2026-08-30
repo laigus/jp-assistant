@@ -249,12 +249,12 @@ class MainWindow(QWidget):
         layout.addWidget(self.ocr_text)
 
         # ── temp prompt ──
-        tp_label = QLabel("临时指令（仅下次解析生效）")
+        tp_label = QLabel("临时指令（当前文本持续生效，识别新文本后清空）")
         tp_label.setObjectName("sectionLabel")
         layout.addWidget(tp_label)
 
         self.temp_prompt_edit = QTextEdit()
-        self.temp_prompt_edit.setPlaceholderText("例如：请额外说明敬语用法...")
+        self.temp_prompt_edit.setPlaceholderText("例如：只解释敬语用法...")
         self.temp_prompt_edit.setAcceptRichText(False)
         self.temp_prompt_edit.setMaximumHeight(50)
         layout.addWidget(self.temp_prompt_edit)
@@ -462,6 +462,8 @@ class MainWindow(QWidget):
     @pyqtSlot(str)
     def _on_ocr_done(self, text):
         self.ocr_text.setPlainText(text)
+        if text.strip():
+            self.temp_prompt_edit.clear()
         self.status_label.setText("识别完成")
         self._play_sound("chime")
 
@@ -486,12 +488,8 @@ class MainWindow(QWidget):
         self.analysis_browser.clear()
         self._last_md = ""
 
-        temp = self.temp_prompt_edit.toPlainText().strip()
-        if temp:
-            self.prompt_mgr.temp_prompt = temp
-            self.temp_prompt_edit.clear()
-
-        prompt = self.prompt_mgr.build_prompt(text)
+        temp_instruction = self.temp_prompt_edit.toPlainText()
+        prompt = self.prompt_mgr.build_prompt(text, temp_instruction)
         worker = AnalyzeWorker(self.analyzer, prompt)
         worker.progress.connect(self._on_analysis_progress)
         worker.result_ready.connect(self._on_analysis_done)

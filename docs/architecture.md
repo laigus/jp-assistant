@@ -14,7 +14,7 @@ jp-assistant/
 ├── core/
 │   ├── ocr.py                 # meikiocr 封装
 │   ├── translator.py          # 提供商配置、模型获取、流式解析
-│   ├── prompt_manager.py      # 系统 Prompt 与临时 Prompt
+│   ├── prompt_manager.py      # 系统 Prompt 与临时指令 Prompt 构造
 │   ├── tts.py                 # edge-tts 语音合成
 │   └── vocab.py               # 生词本数据
 ├── ui/
@@ -22,7 +22,6 @@ jp-assistant/
 │   ├── screenshot.py          # 全屏框选
 │   ├── result_window.py       # 详情展示与缩放
 │   ├── settings_dialog.py     # 提供商、模型、Prompt、外观设置
-│   ├── prompt_dialog.py       # Prompt 编辑
 │   ├── vocab_window.py        # 生词本界面
 │   ├── ui_config.py           # 主题、透明度、窗口状态持久化
 │   ├── styles.py              # QSS
@@ -39,10 +38,12 @@ jp-assistant/
 ## 核心流程
 
 1. `ui/screenshot.py` 获取框选区域，`core/ocr.py` 将图像交给 meikiocr。
-2. 用户可在主窗口修正 OCR 文本，再由 `PromptManager` 组装解析 Prompt。
+2. 用户可在主窗口修正 OCR 文本，再由 `PromptManager` 组装解析 Prompt：没有临时指令时使用系统 Prompt；有临时指令时仅用“待解释文本 + 临时指令”组成完整 Prompt，不叠加系统 Prompt。
 3. `GrammarAnalyzer` 按当前提供商调用 Ollama 或 OpenAI 兼容接口，并把流式增量送回界面。
 4. `ui/md_render.py` 把解析结果渲染到主窗口和详情窗口；内容更新时保留详情窗口缩放比例。
 5. `core/tts.py` 生成语音，生词内容由 `core/vocab.py` 持久化。
+
+临时指令由主窗口持有。它在当前文本的重复解析中持续生效，仅在 OCR 成功识别到下一段非空文本后清空；解析、停止解析、OCR 失败和空识别结果都不会提前清空。
 
 ## 模型提供商
 

@@ -1,4 +1,4 @@
-"""Prompt management - save/load/edit system prompts with temp prompt support."""
+"""Prompt management - save/load system prompts and build analysis prompts."""
 import json
 import os
 
@@ -27,7 +27,6 @@ class PromptManager:
     def __init__(self, data_dir: str):
         self._path = os.path.join(data_dir, "prompts.json")
         self.system_prompt = DEFAULT_PROMPT
-        self.temp_prompt = ""
         self._load()
 
     def _load(self):
@@ -44,12 +43,15 @@ class PromptManager:
         with open(self._path, "w", encoding="utf-8") as f:
             json.dump({"system_prompt": self.system_prompt}, f, ensure_ascii=False, indent=2)
 
-    def build_prompt(self, text: str) -> str:
-        prompt = self.system_prompt.replace("{text}", text)
-        if self.temp_prompt.strip():
-            prompt += f"\n\n额外要求：{self.temp_prompt}"
-            self.temp_prompt = ""
-        return prompt
+    def build_prompt(self, text: str, temp_instruction: str = "") -> str:
+        temp_instruction = temp_instruction.strip()
+        if temp_instruction:
+            return (
+                "请针对以下日语文本，按照临时指令进行解释。\n\n"
+                f"待解释文本：\n{text}\n\n"
+                f"临时指令：\n{temp_instruction}"
+            )
+        return self.system_prompt.replace("{text}", text)
 
     def reset(self):
         self.system_prompt = DEFAULT_PROMPT
