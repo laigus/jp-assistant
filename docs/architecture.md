@@ -1,9 +1,9 @@
 # 项目架构
 
-JP Assistant 是 Windows 桌面日语学习助手，主流程为：
+耗耗语言助手是 Windows 桌面多语言学习助手，目前支持日语和英语，主流程为：
 
 ```text
-屏幕框选 → OCR → 文本编辑 → 翻译与语法解析 → Markdown 展示 → 朗读/生词本
+学习语言 → 屏幕框选/输入 → OCR → 文本编辑 → 翻译与语法解析 → Markdown 展示 → 朗读/生词本
 ```
 
 ## 模块划分
@@ -11,8 +11,14 @@ JP Assistant 是 Windows 桌面日语学习助手，主流程为：
 ```text
 jp-assistant/
 ├── main.py                    # 应用入口
+├── app_info.py                # 应用名称、Windows 标识和图标路径
+├── assets/
+│   ├── app.png                # 完整仓鼠插画的圆角玻璃效果图，四角透明
+│   ├── haohao.ico             # Windows 多尺寸图标
+│   └── create_icon.py         # 从原图生成图标
 ├── core/
-│   ├── ocr.py                 # meikiocr 封装
+│   ├── languages.py           # 语言注册表、按语言的 OCR / 音色 / 语速配置
+│   ├── ocr.py                 # meikiocr 与 Windows OCR 路由
 │   ├── translator.py          # 提供商配置、模型获取、流式解析
 │   ├── prompt_manager.py      # 系统 Prompt 与临时指令 Prompt 构造
 │   ├── tts.py                 # edge-tts 语音合成
@@ -21,7 +27,10 @@ jp-assistant/
 │   ├── main_window.py         # 主窗口与流程编排
 │   ├── screenshot.py          # 全屏框选
 │   ├── result_window.py       # 详情展示与缩放
-│   ├── settings_dialog.py     # 提供商、模型、Prompt、外观设置
+│   ├── settings_dialog.py     # 左侧导航、通用设置、统一保存/取消
+│   ├── language_settings_page.py # 按语言的 OCR、音色、语速、Prompt 草稿
+│   ├── tts_worker.py          # 共享朗读与音色列表 Worker
+│   ├── widgets.py             # 深浅主题下保持可见箭头的公共下拉框
 │   ├── vocab_window.py        # 生词本界面
 │   ├── ui_config.py           # 主题、透明度、窗口状态持久化
 │   ├── styles.py              # QSS
@@ -37,13 +46,27 @@ jp-assistant/
 
 ## 核心流程
 
-1. `ui/screenshot.py` 获取框选区域，`core/ocr.py` 将图像交给 meikiocr。
-2. 用户可在主窗口修正 OCR 文本，再由 `PromptManager` 组装解析 Prompt：没有临时指令时使用系统 Prompt；有临时指令时仅用“待解释文本 + 临时指令”组成完整 Prompt，不叠加系统 Prompt。
+应用身份集中在 `app_info.py`，主窗口、Qt 应用与快捷方式安装脚本共用名称和图标路径；Windows 启动时设置独立 AppUserModelID，避免任务栏显示通用 Python 图标。`assets/app.png` 保留完整仓鼠插画并加入圆角、凸起玻璃高光与柔和阴影，轮廓外透明；`assets/create_icon.py` 校验透明通道，按传入的统一图标路径生成 16–256 像素的 ICO。安装脚本始终从当前图片重建图标，并在新快捷方式保存验证后移除指向同一启动脚本的其他名称快捷方式；仓库目录名称保持不变。
+
+1. 主窗口持有学习语言；`ui/screenshot.py` 获取框选区域，OCR Worker 捕获该语言配置。日语默认使用 meikiocr，并传入检测/识别阈值；英语使用 Windows OCR，要求本机安装对应语言组件。Windows 位图、DataWriter 和线程 COM apartment 在结束时释放。
+2. 用户可修正 OCR 文本，再由 `PromptManager` 按学习语言组装解析 Prompt：没有临时指令时使用该语言的系统 Prompt；有临时指令时只用语言上下文、待解释文本与临时指令，不叠加系统 Prompt。
 3. `GrammarAnalyzer` 按当前提供商调用 Ollama 或 OpenAI 兼容接口，并把流式增量送回界面。
 4. `ui/md_render.py` 把解析结果渲染到主窗口和详情窗口；内容更新时保留详情窗口缩放比例。
-5. `core/tts.py` 生成语音，生词内容由 `core/vocab.py` 持久化。
+5. `core/tts.py` 继续通过 Edge TTS 生成语音，Worker 捕获音色与语速。语音缓存键包含文本、语言、音色和语速，生词内容由 `core/vocab.py` 持久化。
+
+语音合成、试听和音色列表共用 `core/tts.py` 的代理选择：通过标准库读取环境变量或 Windows 系统代理，遵守目标主机的代理绕过规则；对 WebSocket 显式传递代理，按 WSS、HTTPS、HTTP、HTTP 类型 ALL 的顺序选择。代理地址不写入项目配置，TLS 证书校验保持开启。短暂连接错误或超时等待 0.5 秒后重试一次；证书、TLS、认证或参数错误直接反馈。重试创建新的单次 `Communicate` 对象并覆盖不完整音频，最终失败时删除该音频；`ui/tts_worker.py` 将连接、超时、代理认证与 TLS 错误转换为统一中文提示。试听每次重新合成，不使用主窗口或生词本的播放缓存。
 
 临时指令由主窗口持有。它在当前文本的重复解析中持续生效，仅在 OCR 成功识别到下一段非空文本后清空；解析、停止解析、OCR 失败和空识别结果都不会提前清空。
+
+## 设置与语言边界
+
+- 通用设置全局共享：API 提供商、分析模型、主题、透明度、Acrylic 和提示音。
+- 主窗口以横排、互斥的语言图标按钮选择学习语言，启动时恢复已保存的选择；重复点击当前语言不重置内容。图标由 `ui/icons.py` 维护（未配置专用图标时使用地球图标），选中、悬停和焦点样式集中在 `ui/styles.py`，主题切换同步刷新。设置页的配置语言仍使用下拉框。
+- 语言注册表集中维护显示名称、默认 OCR、locale、音色及输入示例；默认 Prompt 按语言维护在 `core/prompt_manager.py`。新增语言时补齐注册项和默认 Prompt，并核对其 OCR 与音色能力，不复制窗口或流程。
+- `data/languages.json` 保存当前学习语言与各语言 OCR、音色、语速；`data/prompts.json` 保存按语言的 Prompt。界面与解释语言保持中文。
+- 设置的配置语言仅决定当前编辑对象，不改变主窗口学习语言。页面切换与语言切换保留草稿，API 与语言设置的草稿不修改运行中的配置，保存前验证所有语言；保存统一生效，取消放弃未保存草稿。
+- 主窗口的上下文版本标识隔离旧 OCR、解析与 TTS 回调。切换学习语言清空文本、临时指令、解析和语音缓存；保存设置使未完成回调失效但保留已显示的原文和解析。分析 Worker 使用自己的模型调用对象，后续保存设置不会修改正在运行的调用。
+- 生词条目保存语言及音频使用的音色/语速，按语言和原句去重。查看历史条目时按条目语言获取当前配置；音色或语速变化后重新生成音频。原文编辑后不把另一段文本的解析一起存入生词本。
 
 ## 模型提供商
 
@@ -56,8 +79,9 @@ jp-assistant/
 
 ## 线程与资源约束
 
-- OCR、LLM、TTS 和模型列表请求不得阻塞 UI 线程。
+- OCR、LLM、TTS、试听、音色列表和模型列表请求不得阻塞 UI 线程。
 - Worker 结束后由统一清理流程释放。
+- 主窗口关闭时取消解析并等待后台任务的结束信号，不提前销毁运行中的 QThread 或删除仍在生成的音频；试听关闭后忽略迟到回调并清理临时音频。
 - 流式 HTTP response 无论成功、取消或异常都必须关闭，避免后续请求挂起。
 - 主题切换后同步刷新 QSS、图标、Markdown HTML 和 Acrylic 效果。
 - `data/` 是运行时目录，不存开发验证产物。

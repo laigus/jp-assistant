@@ -1,50 +1,27 @@
-"""Settings dialog — provider / model selection, API key, prompt management."""
+"""Settings dialog with general and independent language settings pages."""
 import copy
 from urllib.parse import urlparse
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QTextEdit, QApplication, QSizePolicy, QComboBox, QSlider, QCheckBox,
-    QLineEdit, QMessageBox,
+    QApplication, QSizePolicy, QSlider, QCheckBox,
+    QLineEdit, QMessageBox, QListWidget, QStackedWidget, QScrollArea,
 )
-from PyQt6.QtCore import QPointF, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import (
     QPainter,
-    QPalette,
-    QPolygonF,
     QStandardItem,
     QStandardItemModel,
 )
 
-from ui.acrylic import enable_acrylic
+from ui.acrylic import enable_acrylic, disable_acrylic
 from ui.glass_base import paint_glass
 from ui.ui_config import UIConfig, THEMES
 from core.prompt_manager import PromptManager
 from core.translator import ModelsConfig, fetch_provider_models
-
-
-class ArrowComboBox(QComboBox):
-    """Editable combo box with an always-visible dropdown arrow."""
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        color = self.palette().color(QPalette.ColorRole.Text)
-        color.setAlpha(170 if self.isEnabled() else 80)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(color)
-        x = self.width() - 14
-        y = self.height() / 2 + 1
-        painter.drawPolygon(
-            QPolygonF(
-                [
-                    QPointF(x - 4, y - 3),
-                    QPointF(x + 4, y - 3),
-                    QPointF(x, y + 2),
-                ]
-            )
-        )
+from core.languages import LanguageConfig
+from ui.language_settings_page import LanguageSettingsPage
+from ui.widgets import ArrowComboBox
 
 
 class ModelFetchWorker(QThread):
@@ -78,20 +55,22 @@ class ModelFetchWorker(QThread):
 
 class SettingsDialog(QWidget):
     settings_changed = pyqtSignal()
+    background_idle = pyqtSignal()
     _saved_pos = None
 
-    def __init__(self, prompt_manager: PromptManager, models_cfg: ModelsConfig, parent=None):
+    def __init__(self, prompt_manager: PromptManager, models_cfg: ModelsConfig,
+                 language_config: LanguageConfig, parent=None):
         super().__init__(parent)
         self.pm = prompt_manager
-        self.models_cfg = models_cfg
+        self._live_models = models_cfg
+        self.models_cfg = copy.deepcopy(models_cfg)
+        self.language_config = language_config
         self._drag_pos = None
         self._acrylic_applied = False
         self._ollama_local: list[str] = []
         self._ollama_cloud: list[str] = []
         self._editing_provider_key = ""
         self._loading_provider = False
-        self._provider_snapshot = None
-        self._active_provider_snapshot = ""
         self._saved_this_session = False
         self._model_fetch_worker: ModelFetchWorker | None = None
         self._model_fetch_request_id = 0
@@ -102,7 +81,8 @@ class SettingsDialog(QWidget):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.resize(540, 740)
+        self.resize(760, 800)
+        self.setMinimumSize(680, 580)
         self._build_ui()
 
     def _build_ui(self):
@@ -123,6 +103,53 @@ class SettingsDialog(QWidget):
         close_btn.clicked.connect(self.close)
         title_bar.addWidget(close_btn)
         layout.addLayout(title_bar)
+
+        body = QHBoxLayout()
+        body.setSpacing(18)
+        self.navigation = QListWidget()
+        self.navigation.setObjectName("settingsNavigation")
+        self.navigation.addItems(["通用设置", "语言设置"])
+        self.navigation.setFixedWidth(120)
+        body.addWidget(self.navigation)
+        self.pages = QStackedWidget()
+        self.pages.setObjectName("settingsPages")
+        self.pages.addWidget(self._scroll_page(self._build_general_page()))
+        self.language_page = LanguageSettingsPage(self.language_config, self.pm)
+        self.language_page.background_idle.connect(self.background_idle.emit)
+        self.pages.addWidget(self._scroll_page(self.language_page))
+        body.addWidget(self.pages, 1)
+        self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.navigation.setCurrentRow(0)
+        layout.addLayout(body, 1)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(self.close)
+        buttons.addWidget(cancel_btn)
+        save_btn = QPushButton("✓ 保存")
+        save_btn.setObjectName("captureBtn")
+        save_btn.setToolTip("保存通用设置和所有语言配置")
+        save_btn.clicked.connect(self._on_save)
+        buttons.addWidget(save_btn)
+        layout.addLayout(buttons)
+
+    @staticmethod
+    def _scroll_page(page):
+        scroll = QScrollArea()
+        scroll.setObjectName("settingsScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(page)
+        page.setAutoFillBackground(False)
+        scroll.viewport().setAutoFillBackground(False)
+        return scroll
+
+    def _build_general_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 8, 0)
+        layout.setSpacing(8)
 
         # --- provider section ---
         prov_label = QLabel("API 提供商")
@@ -265,37 +292,8 @@ class SettingsDialog(QWidget):
         self.chime_check.setToolTip("OCR 识别和解析完成时播放提示音")
         layout.addWidget(self.chime_check)
 
-        # --- prompt section ---
-        sp_label = QLabel("系统 Prompt（{text} 为待分析文本占位符）")
-        sp_label.setObjectName("sectionLabel")
-        layout.addWidget(sp_label)
-
-        self.prompt_edit = QTextEdit()
-        self.prompt_edit.setPlaceholderText("系统 Prompt...")
-        self.prompt_edit.setAcceptRichText(False)
-        self.prompt_edit.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
-        layout.addWidget(self.prompt_edit, stretch=1)
-
-        # --- buttons ---
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
-
-        reset_btn = QPushButton("↺ 恢复默认 Prompt")
-        reset_btn.setToolTip("重置为默认 Prompt")
-        reset_btn.clicked.connect(self._on_reset)
-        btn_row.addWidget(reset_btn)
-
-        btn_row.addStretch()
-
-        save_btn = QPushButton("✓ 保存")
-        save_btn.setObjectName("captureBtn")
-        save_btn.setToolTip("保存所有设置")
-        save_btn.clicked.connect(self._on_save)
-        btn_row.addWidget(save_btn)
-
-        layout.addLayout(btn_row)
+        layout.addStretch()
+        return page
 
     # --- public API ---
 
@@ -315,8 +313,12 @@ class SettingsDialog(QWidget):
             self._populate_model_combo()
 
     def show_dialog(self):
+        if self.isVisible():
+            self.raise_()
+            self.activateWindow()
+            return
         self._begin_provider_edit_session()
-        self.prompt_edit.setPlainText(self.pm.system_prompt)
+        self.language_page.load()
         cfg = UIConfig()
         self.opacity_slider.setValue(cfg.opacity)
         self.opacity_value_label.setText(f"{cfg.opacity}%")
@@ -342,19 +344,14 @@ class SettingsDialog(QWidget):
     # --- internal ---
 
     def _begin_provider_edit_session(self):
-        self._provider_snapshot = copy.deepcopy(self.models_cfg.providers)
-        self._active_provider_snapshot = self.models_cfg.active_provider
+        self.models_cfg = copy.deepcopy(self._live_models)
         self._editing_provider_key = ""
         self._saved_this_session = False
         self.model_status_label.clear()
         self.model_status_label.hide()
 
-    def _restore_provider_snapshot(self):
-        if self._provider_snapshot is None:
-            return
-        self.models_cfg.providers = copy.deepcopy(self._provider_snapshot)
-        self.models_cfg.active_provider = self._active_provider_snapshot
-        self._provider_snapshot = None
+    def _discard_provider_draft(self):
+        self.models_cfg = copy.deepcopy(self._live_models)
         self._editing_provider_key = ""
 
     def _refresh_providers(self, selected_key: str = ""):
@@ -605,6 +602,11 @@ class SettingsDialog(QWidget):
             self.fetch_models_btn.setText("获取模型")
         if isinstance(worker, QThread):
             worker.deleteLater()
+        if not self.background_busy():
+            self.background_idle.emit()
+
+    def background_busy(self):
+        return self._model_fetch_worker is not None or bool(self.language_page._workers)
 
     def _populate_model_combo(self):
         key = self.current_provider_key
@@ -668,10 +670,14 @@ class SettingsDialog(QWidget):
     def _on_save(self):
         self._store_provider_fields(self._editing_provider_key)
         if not self._validate_custom_providers():
+            self.navigation.setCurrentRow(0)
             return
-
-        self.pm.system_prompt = self.prompt_edit.toPlainText()
-        self.pm.save()
+        error = self.language_page.validate()
+        if error:
+            self.navigation.setCurrentRow(1)
+            QMessageBox.warning(self, "语言配置不完整", error)
+            return
+        self.language_page.apply()
 
         cfg = UIConfig()
         cfg.opacity = self.opacity_slider.value()
@@ -683,22 +689,20 @@ class SettingsDialog(QWidget):
         prov_key = self.current_provider_key
         if prov_key:
             self.models_cfg.active_provider = prov_key
-            self.models_cfg.save()
+            self._live_models.providers = copy.deepcopy(self.models_cfg.providers)
+            self._live_models.active_provider = prov_key
+            self._live_models.save()
 
         self._saved_this_session = True
-        self._provider_snapshot = None
         self.settings_changed.emit()
         self.close()
-
-    def _on_reset(self):
-        from core.prompt_manager import DEFAULT_PROMPT
-        self.prompt_edit.setPlainText(DEFAULT_PROMPT)
 
     def closeEvent(self, event):
         SettingsDialog._saved_pos = self.pos()
         self._model_fetch_request_id += 1
         if not self._saved_this_session:
-            self._restore_provider_snapshot()
+            self._discard_provider_draft()
+        self.language_page.end_preview()
         self._acrylic_applied = False
         super().closeEvent(event)
 
@@ -729,8 +733,11 @@ class SettingsDialog(QWidget):
         if not self._acrylic_applied:
             hwnd = int(self.winId())
             _cfg = UIConfig()
-            self._acrylic_applied = enable_acrylic(
-                hwnd, tint_color=_cfg.acrylic_tint(), dark_mode=not _cfg.is_light
-            )
+            if _cfg.acrylic_enabled:
+                self._acrylic_applied = enable_acrylic(
+                    hwnd, tint_color=_cfg.acrylic_tint(), dark_mode=not _cfg.is_light
+                )
+            else:
+                disable_acrylic(hwnd, dark_mode=not _cfg.is_light)
             if self._acrylic_applied:
                 self.update()

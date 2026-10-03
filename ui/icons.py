@@ -5,6 +5,19 @@ from PyQt6.QtSvg import QSvgRenderer
 
 # SVG path data for each icon (24x24 viewBox)
 _ICONS = {
+    "language_ja": (
+        '<rect x="7" y="4" width="10" height="16" rx="1" fill="none" stroke-width="1.8"/>'
+        '<path d="M7 12h10" fill="none" stroke-width="1.8"/>'
+    ),
+    "language_en": (
+        '<path d="M10 6H4v12h6M4 12h5M14 18V6l6 12V6" fill="none" '
+        'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
+    ),
+    "language": (
+        '<circle cx="12" cy="12" r="9" fill="none" stroke-width="1.6"/>'
+        '<ellipse cx="12" cy="12" rx="4" ry="9" fill="none" stroke-width="1.6"/>'
+        '<path d="M3 12h18" fill="none" stroke-width="1.6"/>'
+    ),
     "settings": (
         '<path d="M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 '
         '3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97s-.03-.66-.07-1l'
@@ -87,6 +100,12 @@ def icon(name: str, size: int = 18, color: str = "#ffffff") -> QIcon:
     renderer.render(painter)
     painter.end()
     return QIcon(pixmap)
+
+
+def language_icon(language: str, size: int = 20, color: str = "#ffffff") -> QIcon:
+    """Use a language badge, or a globe for languages without a dedicated SVG."""
+    name = f"language_{language}"
+    return icon(name if name in _ICONS else "language", size, color)
 
 
 def themed_color(is_light: bool, alpha: float = 0.7) -> str:

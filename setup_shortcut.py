@@ -1,4 +1,4 @@
-"""One-click setup: generate app icon + create desktop shortcut.
+"""Build the application icon and install its desktop shortcut.
 
 Usage:
     .venv\\Scripts\\python.exe setup_shortcut.py
@@ -7,20 +7,16 @@ import os
 import sys
 import subprocess
 
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-ICON_PATH = os.path.join(PROJECT_DIR, "assets", "app.ico")
+from app_info import APP_NAME, BASE_DIR, ICON_PATH
+from assets.create_icon import create_icon
+
+PROJECT_DIR = str(BASE_DIR)
 VBS_PATH = os.path.join(PROJECT_DIR, "run.vbs")
 
 
 def ensure_icon():
-    if os.path.exists(ICON_PATH):
-        print(f"[OK] Icon already exists: {ICON_PATH}")
-        return
-    print("[...] Generating app icon...")
-    sys.path.insert(0, os.path.join(PROJECT_DIR, "assets"))
-    from create_icon import create_icon
-    create_icon()
-    print(f"[OK] Icon generated: {ICON_PATH}")
+    create_icon(ICON_PATH)
+    print(f"[OK] Icon updated: {ICON_PATH}")
 
 
 def ensure_vbs():
@@ -42,46 +38,59 @@ def ensure_vbs():
 
 
 def create_desktop_shortcut():
-    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-    shortcut_path = os.path.join(desktop, "JP Assistant.lnk")
-
-    ps_script = (
-        f'$ws = New-Object -ComObject WScript.Shell; '
-        f'$sc = $ws.CreateShortcut("{shortcut_path}"); '
-        f'$sc.TargetPath = "wscript.exe"; '
-        f'$sc.Arguments = """{VBS_PATH}"""; '
-        f'$sc.WorkingDirectory = "{PROJECT_DIR}"; '
-        f'$sc.IconLocation = "{ICON_PATH},0"; '
-        f'$sc.Description = "JP Assistant - 日语学习助手"; '
-        f'$sc.Save()'
-    )
-
+    env = os.environ.copy()
+    env.update(APP_SHORTCUT_NAME=APP_NAME, APP_LAUNCHER_PATH=VBS_PATH,
+               APP_PROJECT_DIR=PROJECT_DIR, APP_ICON_PATH=ICON_PATH)
+    # Pass values as data, not interpolated PowerShell source.
+    ps_script = r'''
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$desktop = [Environment]::GetFolderPath('Desktop')
+$shortcutPath = Join-Path $desktop ($env:APP_SHORTCUT_NAME + '.lnk')
+$arguments = '"' + $env:APP_LAUNCHER_PATH + '"'
+$ws = New-Object -ComObject WScript.Shell
+$sc = $ws.CreateShortcut($shortcutPath)
+$sc.TargetPath = Join-Path $env:WINDIR 'System32/wscript.exe'
+$sc.Arguments = $arguments
+$sc.WorkingDirectory = $env:APP_PROJECT_DIR
+$sc.IconLocation = $env:APP_ICON_PATH + ',0'
+$sc.Description = $env:APP_SHORTCUT_NAME
+$sc.Save()
+$saved = $ws.CreateShortcut($shortcutPath)
+if ($saved.Arguments -ne $arguments -or $saved.IconLocation -ne ($env:APP_ICON_PATH + ',0') -or
+    $saved.WorkingDirectory -ne $env:APP_PROJECT_DIR -or
+    [IO.Path]::GetFileName($saved.TargetPath) -ine 'wscript.exe') {
+    throw 'Shortcut verification failed'
+}
+# Remove only duplicate shortcuts that launch this exact project.
+foreach ($candidate in Get-ChildItem -LiteralPath $desktop -Filter '*.lnk' -File) {
+    if ($candidate.FullName -eq $shortcutPath) { continue }
+    try { $old = $ws.CreateShortcut($candidate.FullName) } catch { continue }
+    if ($old.Arguments -eq $arguments -and [IO.Path]::GetFileName($old.TargetPath) -ieq 'wscript.exe') {
+        Remove-Item -LiteralPath $candidate.FullName
+    }
+}
+Write-Output $shortcutPath
+'''
     result = subprocess.run(
-        ["powershell", "-Command", ps_script],
-        capture_output=True, text=True,
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+        capture_output=True, text=True, encoding="utf-8", env=env,
     )
-    if result.returncode == 0:
-        print(f"[OK] Desktop shortcut created: {shortcut_path}")
-    else:
-        print(f"[ERROR] Failed to create shortcut: {result.stderr}")
-        return False
-    return True
+    if result.returncode:
+        raise RuntimeError(f"Desktop shortcut setup failed: {result.stderr.strip()}")
+    shortcut_path = result.stdout.strip()
+    print(f"[OK] Desktop shortcut updated: {shortcut_path}")
+    return shortcut_path
 
 
 def main():
-    print("=" * 50)
-    print("  JP Assistant - Shortcut Setup")
-    print("=" * 50)
-    print()
-
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    print(f"{APP_NAME} - Shortcut Setup")
     ensure_icon()
     ensure_vbs()
-
-    print()
     create_desktop_shortcut()
-
-    print()
-    print("Done! Double-click 'JP Assistant' on your desktop to launch.")
+    print(f"Done! Double-click '{APP_NAME}' on your desktop to launch.")
 
 
 if __name__ == "__main__":

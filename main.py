@@ -1,4 +1,4 @@
-"""JP Assistant - Japanese Game Learning Assistant
+"""Haohao Language Assistant - Multilingual Game Learning Assistant
 Floating frosted-glass panel: Screenshot → OCR → Translate + Grammar → TTS
 """
 # onnxruntime must be imported before PyQt6 to avoid DLL conflicts on Windows
@@ -9,12 +9,15 @@ import os
 import logging
 import traceback
 import keyboard
+import ctypes
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QTimer
+from PyQt6.QtGui import QIcon
 
+from app_info import APP_NAME, APP_ID, ICON_PATH
 from ui.main_window import MainWindow
-from core.ocr import JapaneseOCR
+from core.ocr import OCRService
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -37,7 +40,12 @@ def main():
     _setup_logging()
     sys.excepthook = _global_exception_hook
 
+    if sys.platform == "win32":
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
     app = QApplication(sys.argv)
+    app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_NAME)
+    app.setWindowIcon(QIcon(ICON_PATH))
     app.setQuitOnLastWindowClosed(True)
 
     # Pre-generate sound effects if they don't exist
@@ -53,10 +61,7 @@ def main():
         except Exception as e:
             print(f"Warning: Could not generate sounds: {e}")
 
-    # Start OCR model loading in background
-    ocr = JapaneseOCR()
-    ocr.preload()
-
+    ocr = OCRService()
     window = MainWindow(ocr_engine=ocr)
     window.show()
 

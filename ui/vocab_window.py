@@ -16,23 +16,9 @@ from ui.ui_config import UIConfig
 from ui.icons import icon, icon_color_hex
 from core.vocab import VocabManager, VocabEntry
 from core.tts import TextToSpeech
-
-
-class _TtsWorker(QThread):
-    done = pyqtSignal(str)
-    error = pyqtSignal(str)
-
-    def __init__(self, tts: TextToSpeech, text: str):
-        super().__init__()
-        self.tts = tts
-        self.text = text
-
-    def run(self):
-        try:
-            path = self.tts.speak(self.text)
-            self.done.emit(path)
-        except Exception as e:
-            self.error.emit(str(e))
+from core.languages import LANGUAGES, LanguageConfig
+from ui.tts_worker import TtsWorker
+from ui.widgets import ArrowComboBox
 
 
 def _format_time(ts: float) -> str:
@@ -115,7 +101,7 @@ class _VocabCard(QWidget):
         bottom = QHBoxLayout()
         bottom.setSpacing(8)
 
-        self._time_label = QLabel(_format_time(self._entry.timestamp))
+        self._time_label = QLabel(f"{LANGUAGES[self._entry.language].name} · {_format_time(self._entry.timestamp)}")
         self._time_label.setObjectName("vocabMeta")
         bottom.addWidget(self._time_label)
 
@@ -193,11 +179,15 @@ class _VocabCard(QWidget):
 
 class VocabWindow(QWidget):
     """Frosted-glass vocabulary book window."""
+    background_idle = pyqtSignal()
 
-    def __init__(self, vocab_mgr: VocabManager, tts: TextToSpeech, parent=None):
+    def __init__(self, vocab_mgr: VocabManager, tts: TextToSpeech,
+                 language_config: LanguageConfig, parent=None):
         super().__init__(parent)
         self._vocab = vocab_mgr
         self._tts = tts
+        self._language_config = language_config
+        self._play_id = 0
         self._drag_pos = None
         self._acrylic_applied = False
         self._workers: list[QThread] = []
@@ -245,6 +235,13 @@ class VocabWindow(QWidget):
         title_bar.addWidget(self._close_btn)
         layout.addLayout(title_bar)
 
+        self._language_filter = ArrowComboBox()
+        self._language_filter.addItem("全部语言", "")
+        for key, spec in LANGUAGES.items():
+            self._language_filter.addItem(spec.name, key)
+        self._language_filter.currentIndexChanged.connect(self.refresh)
+        layout.addWidget(self._language_filter)
+
         # ── scroll area ──
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
@@ -274,7 +271,7 @@ class VocabWindow(QWidget):
             card.deleteLater()
         self._cards.clear()
 
-        entries = self._vocab.entries()
+        entries = self._vocab.entries(self._language_filter.currentData())
         is_light = UIConfig().is_light
         for i, entry in enumerate(entries):
             card = _VocabCard(entry, is_light)
@@ -311,13 +308,18 @@ class VocabWindow(QWidget):
         self.refresh()
 
     def _on_play(self, entry: VocabEntry):
-        if entry.tts_path and os.path.exists(entry.tts_path):
+        self._play_id += 1
+        token = self._play_id
+        profile = self._language_config.profile(entry.language)
+        voice, rate = profile["voice"], profile["rate"]
+        if (entry.tts_path and os.path.exists(entry.tts_path)
+                and (entry.tts_voice, entry.tts_rate) == (voice, rate)):
             self._play_file(entry.tts_path)
             return
 
-        worker = _TtsWorker(self._tts, entry.sentence)
-        worker.done.connect(lambda path, e=entry: self._on_tts_done(e, path))
-        worker.error.connect(lambda _: None)
+        worker = TtsWorker(self._tts, entry.sentence, voice, rate)
+        worker.result_ready.connect(lambda path: self._on_tts_done(entry, path, voice, rate, token))
+        worker.error.connect(lambda error: self._on_tts_error(token, error))
         self._workers.append(worker)
         worker.finished.connect(lambda w=worker: self._cleanup_worker(w))
         worker.start()
@@ -334,10 +336,16 @@ class VocabWindow(QWidget):
         self._detail_window.set_content(entry.analysis)
         self._detail_window.show_at_saved_pos()
 
-    def _on_tts_done(self, entry: VocabEntry, path: str):
-        entry.tts_path = path
-        self._vocab.save()
-        self._play_file(path)
+    def _on_tts_done(self, entry: VocabEntry, path: str, voice: str, rate: int, token: int):
+        if entry in self._vocab.entries():
+            entry.tts_path, entry.tts_voice, entry.tts_rate = path, voice, rate
+            self._vocab.save()
+        if token == self._play_id and self.isVisible():
+            self._play_file(path)
+
+    def _on_tts_error(self, token: int, error: str):
+        if token == self._play_id:
+            self._count_label.setText(f"朗读失败：{error[:50]}")
 
     def _play_file(self, filepath: str):
         self._media_player.stop()
@@ -348,6 +356,8 @@ class VocabWindow(QWidget):
         if worker in self._workers:
             self._workers.remove(worker)
         worker.deleteLater()
+        if not self._workers:
+            self.background_idle.emit()
 
     def show_window(self):
         self.refresh()
@@ -382,6 +392,8 @@ class VocabWindow(QWidget):
             self.update()
 
     def closeEvent(self, event):
+        self._play_id += 1
+        self._media_player.stop()
         self._acrylic_applied = False
         if self._detail_window:
             self._detail_window.close()

@@ -25,14 +25,14 @@ class PromptBehaviorTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def test_system_prompt_is_used_without_temp_instruction(self):
-        self.prompt_manager.system_prompt = "SYSTEM::{text}"
+        self.prompt_manager.prompts["ja"] = "SYSTEM::{text}"
 
         prompt = self.prompt_manager.build_prompt("本文")
 
         self.assertEqual(prompt, "SYSTEM::本文")
 
     def test_temp_instruction_replaces_system_prompt_with_complete_request(self):
-        self.prompt_manager.system_prompt = "SYSTEM::{text}"
+        self.prompt_manager.prompts["ja"] = "SYSTEM::{text}"
 
         prompt = self.prompt_manager.build_prompt("本文", "  敬语的作用是什么？  ")
 
@@ -86,6 +86,10 @@ class PromptBehaviorTests(unittest.TestCase):
         target = SimpleNamespace(
             _analyze_worker=None,
             _last_md="旧结果",
+            _analysis_text="",
+            _context_id=0,
+            language="ja",
+            _deliver=Mock(),
             ocr_text=QTextEdit(),
             temp_prompt_edit=QTextEdit(),
             status_label=QLabel(),
@@ -101,6 +105,14 @@ class PromptBehaviorTests(unittest.TestCase):
         target.ocr_text.setPlainText("現在の本文")
         target.temp_prompt_edit.setPlainText(temp_instruction)
         return target
+
+    def test_english_prompt_and_temp_instruction_use_english_context(self):
+        self.prompt_manager.prompts["en"] = "EN::{text}"
+        self.assertEqual(self.prompt_manager.build_prompt("Hello", language="en"), "EN::Hello")
+        prompt = self.prompt_manager.build_prompt("Hello", "解释时态", "en")
+        self.assertIn("英语文本", prompt)
+        self.assertNotIn("EN::", prompt)
+        self.assertNotIn("日语", prompt)
 
 
 if __name__ == "__main__":

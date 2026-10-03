@@ -28,6 +28,9 @@ def build_style(opacity: int = 15, is_light: bool = False) -> str:
         icon_fg = "rgba(0, 0, 0, 60)"
         icon_hover_bg = "rgba(0, 0, 0, 8)"
         icon_hover_fg = "rgba(0, 0, 0, 150)"
+        language_active_bg = "rgba(35, 110, 208, 25)"
+        language_active_hover = "rgba(35, 110, 208, 40)"
+        language_active_border = "rgba(35, 110, 208, 100)"
         slider_groove = "rgba(0, 0, 0, 12)"
         slider_handle = "rgba(0, 0, 0, 100)"
         slider_handle_hover = "rgba(0, 0, 0, 160)"
@@ -67,6 +70,9 @@ def build_style(opacity: int = 15, is_light: bool = False) -> str:
         icon_fg = "rgba(255, 255, 255, 70)"
         icon_hover_bg = "rgba(255, 255, 255, 10)"
         icon_hover_fg = "rgba(255, 255, 255, 160)"
+        language_active_bg = "rgba(121, 184, 255, 30)"
+        language_active_hover = "rgba(121, 184, 255, 45)"
+        language_active_border = "rgba(121, 184, 255, 100)"
         slider_groove = "rgba(255, 255, 255, 10)"
         slider_handle = "rgba(255, 255, 255, 120)"
         slider_handle_hover = "rgba(255, 255, 255, 180)"
@@ -109,13 +115,46 @@ QLabel#sectionLabel {{
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 1px;
-    text-transform: uppercase;
     padding-top: 2px;
 }}
 
 QLabel#statusLabel {{
     color: {fg_status};
     font-size: 11px;
+}}
+
+QListWidget#settingsNavigation {{
+    background: transparent;
+    color: {fg_dim};
+    border: none;
+    outline: 0;
+    font-size: 13px;
+}}
+
+QListWidget#settingsNavigation::item {{
+    padding: 12px 8px;
+    margin-bottom: 6px;
+    border-radius: 8px;
+}}
+
+QListWidget#settingsNavigation::item:selected {{
+    background: {sel_bg};
+    color: {fg_title};
+    font-weight: bold;
+}}
+
+QScrollArea#settingsScroll, QStackedWidget#settingsPages {{
+    background: transparent;
+    border: none;
+}}
+
+QSpinBox, QDoubleSpinBox {{
+    background-color: rgba({bg_base}, {cb_bg});
+    color: {fg_dim};
+    border: 1px solid {border};
+    border-radius: 6px;
+    padding: 5px;
+    min-height: 22px;
 }}
 
 QTextEdit {{
@@ -201,6 +240,30 @@ QPushButton:disabled {{
     background-color: rgba({bg_base}, 40);
     color: {fg_disabled};
     border: 1px solid rgba({bg_base}, 10);
+}}
+
+QPushButton#languageBtn {{
+    background: transparent;
+    border: 1px solid {border_hover};
+    border-radius: 8px;
+    padding: 0;
+}}
+
+QPushButton#languageBtn:hover {{
+    background-color: {icon_hover_bg};
+}}
+
+QPushButton#languageBtn:checked {{
+    background-color: {language_active_bg};
+    border: 1px solid {language_active_border};
+}}
+
+QPushButton#languageBtn:checked:hover {{
+    background-color: {language_active_hover};
+}}
+
+QPushButton#languageBtn:focus {{
+    border: 1px solid {language_active_border};
 }}
 
 QPushButton#captureBtn {{

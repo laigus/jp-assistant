@@ -1,20 +1,22 @@
-"""Main window - frosted glass floating panel for Japanese learning assistant."""
+"""Main window - multilingual learning flow and language-bound background tasks."""
 import os
+import copy
 import threading
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit,
-    QLabel, QApplication, QSizePolicy, QTextBrowser,
+    QLabel, QApplication, QSizePolicy, QTextBrowser, QButtonGroup,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QThread, pyqtSlot, QUrl
-from PyQt6.QtGui import QPainter
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, pyqtSlot, QUrl, QSize
+from PyQt6.QtGui import QPainter, QIcon
 from PyQt6.QtMultimedia import QSoundEffect, QMediaPlayer, QAudioOutput
 
 from ui.styles import build_style
+from app_info import APP_NAME, ICON_PATH
 from ui.acrylic import enable_acrylic, disable_acrylic
 from ui.glass_base import paint_glass
 from ui.ui_config import UIConfig
-from ui.icons import icon, icon_color_hex
+from ui.icons import icon, language_icon, icon_color_hex
 from ui.screenshot import ScreenshotOverlay
 from ui.md_render import md_to_html
 from ui.result_window import ResultWindow
@@ -23,6 +25,8 @@ from core.translator import GrammarAnalyzer, ModelsConfig
 from core.prompt_manager import PromptManager
 from core.tts import TextToSpeech
 from core.vocab import VocabManager
+from core.languages import LANGUAGES, LanguageConfig
+from ui.tts_worker import TtsWorker
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -34,14 +38,15 @@ class OcrWorker(QThread):
     result_ready = pyqtSignal(str)
     error = pyqtSignal(str)
 
-    def __init__(self, ocr_engine, image):
+    def __init__(self, ocr_engine, image, profile):
         super().__init__()
         self.ocr_engine = ocr_engine
         self.image = image
+        self.profile = dict(profile)
 
     def run(self):
         try:
-            text = self.ocr_engine.recognize(self.image)
+            text = self.ocr_engine.recognize(self.image, self.profile)
             self.result_ready.emit(text)
         except Exception as e:
             self.error.emit(str(e))
@@ -70,23 +75,6 @@ class AnalyzeWorker(QThread):
             self.result_ready.emit(result)
         except Exception as e:
             self.result_ready.emit(f"❌ 解析出错: {e}")
-
-
-class TtsWorker(QThread):
-    result_ready = pyqtSignal(str)
-    error = pyqtSignal(str)
-
-    def __init__(self, tts: TextToSpeech, text: str):
-        super().__init__()
-        self.tts = tts
-        self.text = text
-
-    def run(self):
-        try:
-            path = self.tts.speak(self.text)
-            self.result_ready.emit(path)
-        except Exception as e:
-            self.error.emit(str(e))
 
 
 class ModelListWorker(QThread):
@@ -127,10 +115,12 @@ class MainWindow(QWidget):
         self.models_cfg = ModelsConfig()
         self.analyzer = GrammarAnalyzer(
             provider_key=self.models_cfg.active_provider,
-            models_cfg=self.models_cfg,
+            models_cfg=copy.deepcopy(self.models_cfg),
         )
         self.tts = TextToSpeech()
         self.prompt_mgr = PromptManager(DATA_DIR)
+        self.language_config = LanguageConfig(DATA_DIR)
+        self.language = self.language_config.active_language
         self.vocab_mgr = VocabManager()
         self.screenshot_overlay = ScreenshotOverlay()
 
@@ -138,15 +128,20 @@ class MainWindow(QWidget):
         self._workers: list[QThread] = []
         self._acrylic_applied = False
         self._last_md = ""
+        self._analysis_text = ""
         self._last_image = None
         self._analyze_worker: AnalyzeWorker | None = None
-        self._tts_cache: tuple[str, str] | None = None  # (text, filepath)
+        self._tts_cache = None  # ((text, language, voice, rate), filepath)
+        self._context_id = 0
         self._is_speaking = False
+        self._closing = False
 
         self._init_audio()
         self._init_ui()
         self._connect_signals()
         self._load_models_async()
+        if self.ocr_engine:
+            self.ocr_engine.preload(self.language_config.profile(self.language))
 
     # ── Audio ──
 
@@ -179,6 +174,8 @@ class MainWindow(QWidget):
     # ── UI ──
 
     def _init_ui(self):
+        self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(QIcon(ICON_PATH))
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -198,7 +195,11 @@ class MainWindow(QWidget):
         title_bar.setSpacing(6)
 
         _ic = icon_color_hex(UIConfig().is_light)
-        title = QLabel("日语助手")
+        badge = QLabel()
+        badge.setPixmap(self.windowIcon().pixmap(24, 24))
+        badge.setFixedSize(24, 24)
+        title_bar.addWidget(badge)
+        title = QLabel(APP_NAME)
         title.setObjectName("titleLabel")
         title_bar.addWidget(title)
         title_bar.addStretch()
@@ -210,7 +211,7 @@ class MainWindow(QWidget):
         self._settings_btn = QPushButton()
         self._settings_btn.setIcon(icon("settings", 16, _ic))
         self._settings_btn.setObjectName("iconBtn")
-        self._settings_btn.setToolTip("设置（模型/Prompt/外观）")
+        self._settings_btn.setToolTip("设置（通用设置 / 语言设置）")
         self._settings_btn.clicked.connect(self._on_settings_click)
         title_bar.addWidget(self._settings_btn)
 
@@ -229,6 +230,30 @@ class MainWindow(QWidget):
         title_bar.addWidget(self._close_btn)
 
         layout.addLayout(title_bar)
+
+        language_row = QHBoxLayout()
+        language_row.setSpacing(6)
+        self.language_group = QButtonGroup(self)
+        self.language_group.setExclusive(True)
+        self.language_buttons = {}
+        for key, spec in LANGUAGES.items():
+            button = QPushButton()
+            button.setObjectName("languageBtn")
+            button.setFixedSize(36, 32)
+            button.setIconSize(QSize(20, 20))
+            button.setCheckable(True)
+            button.setChecked(key == self.language)
+            button.setToolTip(spec.name)
+            button.setAccessibleName(f"学习{spec.name}")
+            self.language_group.addButton(button)
+            self.language_buttons[key] = button
+            button.clicked.connect(
+                lambda checked, language=key: self._on_language_changed(language)
+            )
+            language_row.addWidget(button)
+        self._refresh_language_icons()
+        language_row.addStretch()
+        layout.addLayout(language_row)
 
         # ── capture button ──
         self.capture_btn = QPushButton("  截图识别  Ctrl+Alt+S")
@@ -254,7 +279,7 @@ class MainWindow(QWidget):
         layout.addWidget(tp_label)
 
         self.temp_prompt_edit = QTextEdit()
-        self.temp_prompt_edit.setPlaceholderText("例如：只解释敬语用法...")
+        self.temp_prompt_edit.setPlaceholderText(LANGUAGES[self.language].instruction_example)
         self.temp_prompt_edit.setAcceptRichText(False)
         self.temp_prompt_edit.setMaximumHeight(50)
         layout.addWidget(self.temp_prompt_edit)
@@ -335,6 +360,16 @@ class MainWindow(QWidget):
         if worker in self._workers:
             self._workers.remove(worker)
         worker.deleteLater()
+        self._finish_close_when_idle()
+
+    def _finish_close_when_idle(self):
+        if self._closing and not self._background_busy():
+            self.close()
+
+    def _background_busy(self):
+        return (bool(self._workers)
+                or bool(self._settings_dialog and self._settings_dialog.background_busy())
+                or bool(self._vocab_window and self._vocab_window._workers))
 
     def _connect_signals(self):
         self.screenshot_overlay.region_captured.connect(self._on_region_captured)
@@ -355,13 +390,61 @@ class MainWindow(QWidget):
         self._ollama_cloud_cache = cloud
 
     def _on_settings_changed(self):
+        self._invalidate_context(clear_text=False, clear_analysis=False)
         if self._settings_dialog:
             prov_key = self._settings_dialog.current_provider_key
             model = self._settings_dialog.current_model
-            self.analyzer.switch_provider(prov_key, model)
+            self.analyzer = GrammarAnalyzer(provider_key=prov_key, model=model,
+                                           models_cfg=copy.deepcopy(self.models_cfg))
             display = self.models_cfg.provider_display_name(prov_key)
             self.status_label.setText(f"{display}: {model[:20]}")
         self._reapply_appearance()
+        if self.ocr_engine:
+            self.ocr_engine.preload(self.language_config.profile(self.language))
+
+    def _refresh_language_icons(self):
+        is_light = UIConfig().is_light
+        selected_color = "#236ed0" if is_light else "#79b8ff"
+        for key, button in self.language_buttons.items():
+            color = selected_color if button.isChecked() else icon_color_hex(is_light)
+            button.setIcon(language_icon(key, 20, color))
+
+    def _on_language_changed(self, language: str):
+        if language == self.language:
+            return
+        self.language = language
+        self.language_buttons[language].setChecked(True)
+        self._refresh_language_icons()
+        self.language_config.active_language = language
+        self.language_config.save()
+        self._invalidate_context(clear_text=True)
+        self.temp_prompt_edit.setPlaceholderText(LANGUAGES[language].instruction_example)
+        self.status_label.setText(f"已切换到{LANGUAGES[language].name}")
+        if self.ocr_engine:
+            self.ocr_engine.preload(self.language_config.profile(language))
+
+    def _invalidate_context(self, *, clear_text, clear_analysis=True):
+        self._context_id += 1
+        if self._analyze_worker is not None:
+            self._analyze_worker.cancel()
+            self._analyze_worker = None
+        self._set_analyze_running(False)
+        self._stop_speaking()
+        self.speak_btn.setEnabled(True)
+        self._tts_cache = None
+        if clear_analysis:
+            self._last_md = ""
+            self._analysis_text = ""
+            self.analysis_browser.clear()
+        if clear_text:
+            self.ocr_text.clear()
+            self.temp_prompt_edit.clear()
+        if clear_analysis and self._result_window:
+            self._result_window.set_content("")
+
+    def _tts_key(self, text):
+        profile = self.language_config.profile(self.language)
+        return (text, self.language, profile["voice"], profile["rate"])
 
     def _reapply_appearance(self):
         """Re-apply acrylic tint, stylesheet, icons, and repaint."""
@@ -378,6 +461,7 @@ class MainWindow(QWidget):
             disable_acrylic(hwnd, dark_mode=dark)
             self._acrylic_applied = False
         _ic = icon_color_hex(cfg.is_light)
+        self._refresh_language_icons()
         self._settings_btn.setIcon(icon("settings", 16, _ic))
         self._min_btn.setIcon(icon("minimize", 16, _ic))
         self._close_btn.setIcon(icon("close", 16, _ic))
@@ -448,13 +532,15 @@ class MainWindow(QWidget):
         self.screenshot_overlay.start_capture()
 
     def _on_region_captured(self, image):
+        self._invalidate_context(clear_text=False, clear_analysis=False)
+        token = self._context_id
         self._play_sound("capture")
         self._last_image = image
         self.status_label.setText("正在识别...")
         if self.ocr_engine:
-            worker = OcrWorker(self.ocr_engine, image)
-            worker.result_ready.connect(self._on_ocr_done)
-            worker.error.connect(self._on_ocr_error)
+            worker = OcrWorker(self.ocr_engine, image, self.language_config.profile(self.language))
+            worker.result_ready.connect(lambda text: self._deliver(token, self._on_ocr_done, text))
+            worker.error.connect(lambda error: self._deliver(token, self._on_ocr_error, error))
             self._start_worker(worker)
         else:
             self.status_label.setText("OCR 引擎未就绪")
@@ -466,6 +552,10 @@ class MainWindow(QWidget):
             self.temp_prompt_edit.clear()
         self.status_label.setText("识别完成")
         self._play_sound("chime")
+
+    def _deliver(self, token, callback, *args):
+        if token == self._context_id:
+            callback(*args)
 
     @pyqtSlot(str)
     def _on_ocr_error(self, err):
@@ -489,10 +579,12 @@ class MainWindow(QWidget):
         self._last_md = ""
 
         temp_instruction = self.temp_prompt_edit.toPlainText()
-        prompt = self.prompt_mgr.build_prompt(text, temp_instruction)
+        prompt = self.prompt_mgr.build_prompt(text, temp_instruction, self.language)
+        self._analysis_text = text
+        token = self._context_id
         worker = AnalyzeWorker(self.analyzer, prompt)
-        worker.progress.connect(self._on_analysis_progress)
-        worker.result_ready.connect(self._on_analysis_done)
+        worker.progress.connect(lambda result: self._deliver(token, self._on_analysis_progress, result))
+        worker.result_ready.connect(lambda result: self._deliver(token, self._on_analysis_done, result))
         self._analyze_worker = worker
         self._start_worker(worker)
 
@@ -539,16 +631,18 @@ class MainWindow(QWidget):
 
         self._play_sound("click")
 
-        if self._tts_cache and self._tts_cache[0] == text and os.path.exists(self._tts_cache[1]):
+        key = self._tts_key(text)
+        if self._tts_cache and self._tts_cache[0] == key and os.path.exists(self._tts_cache[1]):
             self._on_tts_done(self._tts_cache[1])
             return
 
         self.status_label.setText("合成语音中...")
         self.speak_btn.setEnabled(False)
 
-        worker = TtsWorker(self.tts, text)
-        worker.result_ready.connect(lambda path: self._on_tts_done(path, text))
-        worker.error.connect(lambda e: self._on_tts_error(e))
+        token = self._context_id
+        worker = TtsWorker(self.tts, text, key[2], key[3])
+        worker.result_ready.connect(lambda path: self._deliver(token, self._on_tts_done, path, key))
+        worker.error.connect(lambda error: self._deliver(token, self._on_tts_error, error))
         self._start_worker(worker)
 
     def _stop_speaking(self):
@@ -571,9 +665,9 @@ class MainWindow(QWidget):
         self._set_speaking(False)
         self.status_label.setText(f"语音合成失败: {err[:40]}")
 
-    def _on_tts_done(self, filepath, cache_text=None):
-        if cache_text:
-            self._tts_cache = (cache_text, filepath)
+    def _on_tts_done(self, filepath, cache_key=None):
+        if cache_key:
+            self._tts_cache = (cache_key, filepath)
         self.speak_btn.setEnabled(True)
         self._set_speaking(True)
         self.status_label.setText("朗读中...")
@@ -593,10 +687,12 @@ class MainWindow(QWidget):
     def _on_settings_click(self):
         self._play_sound("click")
         if self._settings_dialog is None:
-            self._settings_dialog = SettingsDialog(self.prompt_mgr, self.models_cfg)
+            self._settings_dialog = SettingsDialog(self.prompt_mgr, self.models_cfg,
+                                                   self.language_config)
             _c = UIConfig()
             self._settings_dialog.setStyleSheet(build_style(_c.opacity, _c.is_light))
             self._settings_dialog.settings_changed.connect(self._on_settings_changed)
+            self._settings_dialog.background_idle.connect(self._finish_close_when_idle)
             if hasattr(self, '_ollama_local_cache'):
                 self._settings_dialog.set_ollama_models(
                     self._ollama_local_cache, self._ollama_cloud_cache
@@ -609,8 +705,11 @@ class MainWindow(QWidget):
             self.status_label.setText("没有可添加的文本")
             return
         self._play_sound("click")
-        tts_path = self._tts_cache[1] if self._tts_cache and self._tts_cache[0] == text else ""
-        self.vocab_mgr.add(text, self._last_md, tts_path)
+        key = self._tts_key(text)
+        tts_path = self._tts_cache[1] if self._tts_cache and self._tts_cache[0] == key else ""
+        analysis = self._last_md if text == self._analysis_text else ""
+        self.vocab_mgr.add(text, analysis, tts_path, language=self.language,
+                           tts_voice=key[2], tts_rate=key[3])
         self.status_label.setText("已加入生词本 ✓")
         if self._vocab_window and self._vocab_window.isVisible():
             self._vocab_window.refresh()
@@ -619,7 +718,8 @@ class MainWindow(QWidget):
         self._play_sound("click")
         if self._vocab_window is None:
             from ui.vocab_window import VocabWindow
-            self._vocab_window = VocabWindow(self.vocab_mgr, self.tts)
+            self._vocab_window = VocabWindow(self.vocab_mgr, self.tts, self.language_config)
+            self._vocab_window.background_idle.connect(self._finish_close_when_idle)
             _c = UIConfig()
             self._vocab_window.setStyleSheet(build_style(_c.opacity, _c.is_light))
         self._vocab_window.show_window()
@@ -637,6 +737,20 @@ class MainWindow(QWidget):
         self._result_window.show_at_saved_pos()
 
     def closeEvent(self, event):
+        if self._background_busy():
+            self._closing = True
+            self._context_id += 1
+            if self._analyze_worker:
+                self._analyze_worker.cancel()
+            self._media_player.stop()
+            if self._settings_dialog:
+                self._settings_dialog.close()
+            if self._vocab_window:
+                self._vocab_window.close()
+            self.setEnabled(False)
+            self.status_label.setText("正在等待后台任务结束...")
+            event.ignore()
+            return
         cfg = UIConfig()
         cfg.window_pos = (self.x(), self.y())
         cfg.save()

@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import QApplication
 import core.translator as translator_module
 import ui.ui_config as ui_config_module
 from core.prompt_manager import PromptManager
+from core.languages import LanguageConfig
 from core.translator import (
     GrammarAnalyzer,
     ModelsConfig,
@@ -76,6 +77,7 @@ class CustomProviderTests(unittest.TestCase):
         ui_config_module.UIConfig._instance = None
         self.models_cfg = ModelsConfig()
         self.prompt_manager = PromptManager(str(root))
+        self.language_config = LanguageConfig(str(root))
         self.dialogs = []
 
     def tearDown(self):
@@ -89,7 +91,7 @@ class CustomProviderTests(unittest.TestCase):
 
     def make_dialog(self, models_cfg=None):
         dialog = SettingsDialog(
-            self.prompt_manager, models_cfg or self.models_cfg
+            self.prompt_manager, models_cfg or self.models_cfg, self.language_config
         )
         self.dialogs.append(dialog)
         dialog._begin_provider_edit_session()
@@ -180,12 +182,12 @@ class CustomProviderTests(unittest.TestCase):
         self.assertEqual(fetched_provider["api_key"], "test-token")
         self.assertEqual(dialog.current_model, "auto-model-a")
         self.assertEqual(
-            self.models_cfg.get_provider(custom_key)["models"],
+            dialog.models_cfg.get_provider(custom_key)["models"],
             ["auto-model-a", "auto-model-b"],
         )
         self.assertNotIn(
             "legacy-model",
-            self.models_cfg.get_provider(custom_key)["models"],
+            dialog.models_cfg.get_provider(custom_key)["models"],
         )
         self.assertTrue(dialog.model_combo.isEditable())
         self.assertGreaterEqual(dialog.model_combo.findText("auto-model-b"), 0)
@@ -194,7 +196,7 @@ class CustomProviderTests(unittest.TestCase):
         dialog.model_combo.setEditText("manual-model")
         dialog._store_provider_fields(custom_key)
         self.assertEqual(
-            self.models_cfg.get_provider(custom_key)["models"],
+            dialog.models_cfg.get_provider(custom_key)["models"],
             ["auto-model-a", "auto-model-b", "manual-model"],
         )
 
@@ -202,7 +204,8 @@ class CustomProviderTests(unittest.TestCase):
         dialog = self.make_dialog()
         dialog._on_add_provider()
         custom_key = dialog.current_provider_key
-        self.assertTrue(self.models_cfg.is_custom_provider(custom_key))
+        self.assertTrue(dialog.models_cfg.is_custom_provider(custom_key))
+        self.assertNotIn(custom_key, self.models_cfg.providers)
 
         dialog.provider_name_edit.setText("Custom Gateway")
         dialog.apiurl_edit.setText("https://gateway.example/v1/")
@@ -247,12 +250,14 @@ class CustomProviderTests(unittest.TestCase):
         self.assertNotIn(custom_key, removed["providers"])
         self.assertEqual(removed["active_provider"], "ollama")
 
-    def test_cancel_restores_provider_snapshot(self):
+    def test_cancel_discards_provider_draft_without_changing_live_config(self):
         original = json.loads(json.dumps(self.models_cfg.providers))
         dialog = self.make_dialog()
         dialog._on_add_provider()
-        self.assertNotEqual(self.models_cfg.providers, original)
-        dialog._restore_provider_snapshot()
+        self.assertNotEqual(dialog.models_cfg.providers, original)
+        self.assertEqual(self.models_cfg.providers, original)
+        dialog._discard_provider_draft()
+        self.assertEqual(dialog.models_cfg.providers, original)
         self.assertEqual(self.models_cfg.providers, original)
 
 

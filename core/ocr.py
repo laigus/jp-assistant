@@ -1,4 +1,5 @@
-"""Japanese OCR using meikiocr — high-speed game text recognition."""
+"""OCR routing: meikiocr for Japanese games, Windows OCR for installed languages."""
+import asyncio
 import os
 import threading
 import time
@@ -13,7 +14,7 @@ MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
 
 
-class JapaneseOCR:
+class MeikiOCRBackend:
     """OCR engine using meikiocr (ONNX-based, optimized for game text)."""
 
     def __init__(self):
@@ -61,12 +62,13 @@ class JapaneseOCR:
         if self._engine is None:
             raise RuntimeError("OCR engine not loaded (timeout, model may still be downloading)")
 
-    def recognize(self, image: Image.Image) -> str:
+    def recognize(self, image: Image.Image, profile: dict) -> str:
         """Recognize Japanese text from a PIL Image."""
         self._ensure_ready()
         cv_img = np.array(image.convert("RGB"))[:, :, ::-1]  # RGB → BGR
         with self._lock:
-            results = self._engine.run_ocr(cv_img)
+            results = self._engine.run_ocr(cv_img, det_threshold=profile["det_threshold"],
+                                          rec_threshold=profile["rec_threshold"])
         lines = [r["text"] for r in results if r.get("text", "").strip()]
         return "\n".join(lines) if lines else ""
 
@@ -77,3 +79,52 @@ class JapaneseOCR:
     @property
     def error(self) -> str | None:
         return self._error
+
+
+class OCRService:
+    def __init__(self):
+        self._meiki = MeikiOCRBackend()
+
+    def preload(self, profile: dict):
+        if profile["ocr_backend"] == "meikiocr":
+            self._meiki.preload()
+
+    def recognize(self, image: Image.Image, profile: dict) -> str:
+        if profile["ocr_backend"] == "meikiocr":
+            self._meiki.preload()
+            return self._meiki.recognize(image, profile)
+        from winrt.runtime import ApartmentType, init_apartment, uninit_apartment
+        init_apartment(ApartmentType.MULTI_THREADED)
+        try:
+            return asyncio.run(self._recognize_windows(image, profile["ocr_locale"]))
+        finally:
+            uninit_apartment()
+
+    @staticmethod
+    async def _recognize_windows(image: Image.Image, locale: str) -> str:
+        from winrt.windows.globalization import Language
+        from winrt.windows.graphics.imaging import SoftwareBitmap, BitmapPixelFormat, BitmapAlphaMode
+        from winrt.windows.media.ocr import OcrEngine
+        from winrt.windows.storage.streams import DataWriter
+
+        engine = OcrEngine.try_create_from_language(Language(locale))
+        if engine is None:
+            raise RuntimeError(f"Windows 未安装 {locale} OCR；请在系统语言选项中安装该语言的文字识别组件。")
+        rgba = image.convert("RGBA")
+        limit = OcrEngine.max_image_dimension
+        if max(rgba.size) > limit:
+            rgba.thumbnail((limit, limit), Image.Resampling.LANCZOS)
+        writer = DataWriter()
+        bitmap = None
+        try:
+            writer.write_bytes(rgba.tobytes("raw", "BGRA"))
+            bitmap = SoftwareBitmap.create_copy_with_alpha_from_buffer(
+                writer.detach_buffer(), BitmapPixelFormat.BGRA8, rgba.width, rgba.height,
+                BitmapAlphaMode.IGNORE,
+            )
+            result = await engine.recognize_async(bitmap)
+            return "\n".join(line.text for line in result.lines)
+        finally:
+            if bitmap is not None:
+                bitmap.close()
+            writer.close()
