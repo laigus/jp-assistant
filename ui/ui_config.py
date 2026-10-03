@@ -1,8 +1,9 @@
 """UI configuration — transparency, theme color, persistence."""
 import json
 import os
+from app_paths import DATA_DIR
 
-_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+_DATA_DIR = str(DATA_DIR)
 _CONFIG_FILE = os.path.join(_DATA_DIR, "ui_config.json")
 
 THEMES = {
@@ -71,7 +72,7 @@ class UIConfig:
             pass
 
     def save(self):
-        os.makedirs(_DATA_DIR, exist_ok=True)
+        os.makedirs(os.path.dirname(_CONFIG_FILE), exist_ok=True)
         with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
             data = {
                 "opacity": self._opacity,

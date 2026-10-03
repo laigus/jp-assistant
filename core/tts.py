@@ -52,7 +52,7 @@ async def _request_with_retry(operation):
 
 class TextToSpeech:
     def __init__(self):
-        self._temp_dir = tempfile.mkdtemp(prefix="jp_assistant_tts_")
+        self._temp_dir = tempfile.mkdtemp(prefix="haohao_tts_")
         self._counter = 0
         self._lock = threading.Lock()
 

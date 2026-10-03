@@ -228,8 +228,9 @@ class LanguageSettingsTests(unittest.TestCase):
               patch.object(entry, "QApplication", return_value=app),
               patch.object(entry, "OCRService"),
               patch.object(entry, "MainWindow"),
+              patch.object(entry, "HotkeyBridge"),
               patch.object(entry.keyboard, "add_hotkey"),
-              patch.object(entry.os.path, "exists", return_value=True),
+              patch.object(entry.keyboard, "remove_hotkey"),
               patch.object(entry.ctypes.windll.shell32,
                            "SetCurrentProcessExplicitAppUserModelID") as identify):
             with self.assertRaises(SystemExit) as stopped:

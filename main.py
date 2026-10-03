@@ -5,27 +5,25 @@ Floating frosted-glass panel: Screenshot → OCR → Translate + Grammar → TTS
 import onnxruntime  # noqa: F401
 
 import sys
-import os
 import logging
 import traceback
 import keyboard
 import ctypes
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QIcon
 
-from app_info import APP_NAME, APP_ID, ICON_PATH
+from app_info import APP_NAME, APP_ID, APP_VERSION, ICON_PATH
+from app_paths import LOG_DIR, SOUNDS_DIR, ensure_data_dir
 from ui.main_window import MainWindow
 from core.ocr import OCRService
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 def _setup_logging():
-    log_path = os.path.join(BASE_DIR, "data", "crash.log")
-    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    ensure_data_dir()
     logging.basicConfig(
-        filename=log_path,
+        filename=LOG_DIR / "crash.log",
+        encoding="utf-8",
         level=logging.ERROR,
         format="%(asctime)s %(levelname)s %(message)s",
     )
@@ -36,42 +34,56 @@ def _global_exception_hook(exc_type, exc_value, exc_tb):
     sys.__excepthook__(exc_type, exc_value, exc_tb)
 
 
-def main():
-    _setup_logging()
-    sys.excepthook = _global_exception_hook
+class HotkeyBridge(QObject):
+    """Deliver global keyboard callbacks onto the Qt GUI thread."""
+    capture = pyqtSignal()
 
+
+def _self_check(app):
+    """Check bundled resources and dynamic backends without touching user data."""
+    import meikiocr  # noqa: F401
+    import edge_tts  # noqa: F401
+    from winrt.windows.globalization import Language  # noqa: F401
+    from winrt.windows.graphics.imaging import SoftwareBitmap  # noqa: F401
+    from winrt.windows.media.ocr import OcrEngine  # noqa: F401
+    from winrt.windows.storage.streams import DataWriter  # noqa: F401
+    from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+    if app.windowIcon().isNull():
+        return 1
+    if not all((SOUNDS_DIR / f"{name}.wav").is_file() for name in ("click", "chime", "capture")):
+        return 2
+    player = QMediaPlayer()
+    player.setAudioOutput(QAudioOutput(player))
+    return 0
+
+
+def main():
     if sys.platform == "win32":
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationDisplayName(APP_NAME)
+    app.setApplicationVersion(APP_VERSION)
     app.setWindowIcon(QIcon(ICON_PATH))
     app.setQuitOnLastWindowClosed(True)
 
-    # Pre-generate sound effects if they don't exist
-    sounds_dir = os.path.join(os.path.dirname(__file__), "assets", "sounds")
-    if not os.path.exists(os.path.join(sounds_dir, "click.wav")):
-        try:
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), "assets"))
-            from generate_sounds import generate_glass_click, generate_glass_chime, generate_capture_sound
-            os.makedirs(sounds_dir, exist_ok=True)
-            generate_glass_click(os.path.join(sounds_dir, "click.wav"))
-            generate_glass_chime(os.path.join(sounds_dir, "chime.wav"))
-            generate_capture_sound(os.path.join(sounds_dir, "capture.wav"))
-        except Exception as e:
-            print(f"Warning: Could not generate sounds: {e}")
+    if "--self-check" in sys.argv[1:]:
+        sys.exit(_self_check(app))
+
+    _setup_logging()
+    sys.excepthook = _global_exception_hook
 
     ocr = OCRService()
     window = MainWindow(ocr_engine=ocr)
     window.show()
 
-    # Global hotkey: Ctrl+Alt+S to capture
-    def on_hotkey():
-        QTimer.singleShot(0, window._on_capture_click)
-
-    keyboard.add_hotkey("ctrl+alt+s", on_hotkey, suppress=True)
-
-    sys.exit(app.exec())
+    bridge = HotkeyBridge(app)
+    bridge.capture.connect(window._on_capture_click)
+    hotkey = keyboard.add_hotkey("ctrl+alt+s", bridge.capture.emit, suppress=True)
+    try:
+        sys.exit(app.exec())
+    finally:
+        keyboard.remove_hotkey(hotkey)
 
 
 if __name__ == "__main__":

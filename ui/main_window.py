@@ -13,6 +13,7 @@ from PyQt6.QtMultimedia import QSoundEffect, QMediaPlayer, QAudioOutput
 
 from ui.styles import build_style
 from app_info import APP_NAME, ICON_PATH
+from app_paths import DATA_DIR, SOUNDS_DIR
 from ui.acrylic import enable_acrylic, disable_acrylic
 from ui.glass_base import paint_glass
 from ui.ui_config import UIConfig
@@ -27,11 +28,6 @@ from core.tts import TextToSpeech
 from core.vocab import VocabManager
 from core.languages import LANGUAGES, LanguageConfig
 from ui.tts_worker import TtsWorker
-
-
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SOUNDS_DIR = os.path.join(BASE_DIR, "assets", "sounds")
-DATA_DIR = os.path.join(BASE_DIR, "data")
 
 
 class OcrWorker(QThread):

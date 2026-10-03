@@ -6,8 +6,9 @@ import re
 from urllib.parse import urlsplit
 
 import requests
+from app_paths import DATA_DIR
 
-_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+_DATA_DIR = str(DATA_DIR)
 _MODELS_CONFIG = os.path.join(_DATA_DIR, "models_config.json")
 
 DEFAULT_PROVIDERS = {
@@ -176,7 +177,7 @@ class ModelsConfig:
     def save(self):
         if self.active_provider not in self.providers:
             self.active_provider = next(iter(self.providers), "ollama")
-        os.makedirs(_DATA_DIR, exist_ok=True)
+        os.makedirs(os.path.dirname(_MODELS_CONFIG), exist_ok=True)
         with open(_MODELS_CONFIG, "w", encoding="utf-8") as f:
             json.dump(
                 {"providers": self.providers, "active_provider": self.active_provider},

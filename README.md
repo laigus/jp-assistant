@@ -1,6 +1,6 @@
 # 耗耗语言助手
 
-使用仓鼠插画圆角玻璃图标、悬浮在桌面最上层的语言学习助手面板，支持在游戏中学习日语和英语，界面与解析说明使用中文。
+支持在游戏中学习日语和英语，界面与解析说明使用中文。
 
 选择学习语言 → 截图识别或输入文本 → 翻译 + 语法解析 → 语音朗读
 
@@ -10,7 +10,7 @@
 - **截图 OCR** — 快捷键 `Ctrl+Alt+S` 框选屏幕区域；日语默认使用 meikiocr，英语使用 Windows 本地 OCR（ESC / 右键取消）
 - **翻译 + 语法解析** — 整体翻译、逐词解释（读音/词性/含义）、语法说明
 - **Markdown 渲染** — 解析结果格式化显示，清晰易读
-- **语音朗读** — 继续使用 Edge 在线 TTS；可选择音色、调整语速、获取音色列表与试听，无需 API Key
+- **语音朗读** — 使用 Edge 在线 TTS；可选择音色、调整语速、获取音色列表与试听，无需 API Key
 - **多 API 后端** — 支持 Ollama、DeepSeek、OpenAI 及所有 OpenAI 兼容 API，在设置中一键切换
 - **自定义 API** — 可保存多个 OpenAI 兼容配置；模型列表支持从 API 自动获取，也可直接手动输入模型 ID
 - **两页设置** — 左侧切换通用设置（API、模型、外观）和语言设置（OCR、音色、语速、Prompt）
@@ -30,7 +30,7 @@
 | OCR 引擎 | **meikiocr**（日语游戏文字）/ Windows OCR（本机安装的语言） |
 | 翻译+语法 | 多后端 LLM API（Ollama / DeepSeek / OpenAI 兼容） |
 | 语音合成 | edge-tts（微软 Edge 在线神经网络 TTS，按语言配置音色与语速） |
-| 音效 | Mixkit 免版权 WAV 音效 + Qt QSoundEffect |
+| 音效 | 内置 WAV 音效 + Qt QSoundEffect |
 | 截图 | mss + PyQt 全屏选区覆盖层 |
 | 热键 | keyboard 库（全局热键 Ctrl+Alt+S） |
 | 磨砂效果 | Windows DWM API（ctypes 调用 user32/dwmapi） |
@@ -38,45 +38,44 @@
 ## 环境要求
 
 - Windows 10/11
-- Python 3.10+
+- 打包版无需安装 Python 或 uv
 - 以下任一 LLM 后端：
   - [Ollama](https://ollama.com/) 已安装并运行（本地模型）
   - [DeepSeek API Key](https://platform.deepseek.com/)（推荐，便宜好用）
   - 任何 OpenAI 兼容 API（OpenAI、通义千问、智谱、Moonshot 等）
 
-## 安装
+## 安装与启动
 
-在项目根目录执行：
+当前发布的是 **Windows 免安装版**，不是带安装向导的安装包：
 
-```bash
-# 创建虚拟环境（如果还没有）
-uv venv .venv
+1. 将完整的「耗耗语言助手」发布文件夹解压或复制到固定位置。
+2. 保留其中的 `耗耗语言助手.exe` 与 `_internal` 文件夹，不要单独搬走 EXE。
+3. 双击 **「耗耗语言助手.exe」** 启动，不需要 Python、uv 或命令行。
+4. 需要桌面入口时，对 EXE 创建快捷方式；本机已有桌面和开始菜单入口，可直接使用。
 
-# 安装依赖
-uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+配置和学习记录存储在发布目录之外，更新程序不会删除它们。删除发布文件夹即可移除程序，用户数据会保留。
+
+日语 meikiocr 首次使用时从 Hugging Face 下载模型，之后复用本机缓存。英语 Windows OCR 需要在 Windows「设置 → 时间和语言 → 语言和区域」中安装对应语言的识别组件；默认代码为 `en-US`，可配置其他已安装的英语组件。手动输入文本进行解析、朗读不依赖 OCR 组件。
+
+## 数据保存与备份
+
+配置与生词本统一保存在：
+
+```text
+%LOCALAPPDATA%\HaohaoLanguageAssistant\
+├── languages.json       # 学习语言、OCR、音色和语速
+├── models_config.json   # API 提供商、密钥和模型
+├── prompts.json         # 各语言 Prompt
+├── ui_config.json       # 主题、透明度和窗口位置
+├── vocabulary.json      # 生词本、原句和解析
+└── logs\crash.log       # 异常日志
 ```
 
-> 首次使用 meikiocr 时会从 HuggingFace 自动下载所需模型；选择 Windows OCR 时无需下载 meikiocr 模型。
+在资源管理器地址栏输入 `%LOCALAPPDATA%\HaohaoLanguageAssistant` 即可打开。源码调试与打包版使用同一份用户数据，发布包不含任何个人配置。
 
-> Windows OCR 需要本机安装对应语言的识别组件。在 Windows「设置 → 时间和语言 → 语言和区域」中添加英语并安装语言选项中的相关组件；缺少组件时程序会给出提示。语言设置中的 OCR 语言代码默认是 `en-US`，可填写 `en-GB` 等已安装的语言。手动输入英语文本进行解析、朗读不依赖 OCR 组件。
+备份或换电脑时，先关闭助手，再复制此目录；恢复时也先关闭助手，再放回目标用户的同名目录。`models_config.json` 包含 API Key，请勿公开分享。删除这个目录会清除配置与生词本。
 
-## 启动
-
-### 方式一：桌面快捷方式（推荐）
-
-运行一次安装脚本，从内置圆角玻璃图片生成带透明边角的多尺寸图标，并创建或更新桌面快捷方式：
-
-```bash
-.venv\Scripts\python.exe setup_shortcut.py
-```
-
-之后双击桌面上的 **「耗耗语言助手」** 图标即可启动，无需打开终端。图标保留完整仓鼠插画，采用圆角、凸起玻璃高光和柔和阴影，四角透明。安装脚本会清理指向同一项目的旧名称快捷方式，不影响其他应用。应用窗口、任务栏和桌面快捷方式使用同一套名称与图标。
-
-### 方式二：命令行启动
-
-```bash
-.venv\Scripts\python.exe main.py
-```
+日语 OCR 模型另外存放在 Hugging Face 缓存中，默认是 `%USERPROFILE%\.cache\huggingface\hub`，设置 `HF_HOME` 或 `HF_HUB_CACHE` 后使用对应位置；不需要将模型缓存和学习记录一起备份。朗读音频存放在系统临时目录，退出后清理，缺少缓存时重新合成。
 
 ## 使用方法
 
@@ -91,7 +90,7 @@ uv pip install --python .venv\Scripts\python.exe -r requirements.txt
 
 设置页切换页面或配置语言会保留本次编辑的草稿；「保存」统一保存两页及所有语言，「取消」或关闭弹窗放弃未保存的修改。恢复默认 Prompt 只影响正在编辑的语言。
 
-设置页的「配置语言」下拉框不会改变主窗口选中的学习语言。主窗口切换学习语言会清空原文、临时指令和解析，并停止当前播放；重复点击已选图标不会清空内容，之前的后台结果不会覆盖新语言模式。学习语言保存在 `data/languages.json`，按语言的系统 Prompt 保存在 `data/prompts.json`。
+设置页的「配置语言」下拉框不会改变主窗口选中的学习语言。主窗口切换学习语言会清空原文、临时指令和解析，并停止当前播放；重复点击已选图标不会清空内容，之前的后台结果不会覆盖新语言模式。学习语言保存在用户数据目录的 `languages.json`，按语言的系统 Prompt 保存在 `prompts.json`。
 
 ### 朗读与试听连接失败
 
@@ -138,11 +137,12 @@ API URL 支持以下三种写法，程序会自动生成正确的 OpenAI 兼容�
 - 版本化 API 根地址：`https://example.com/v1`、`https://example.com/api/v4`
 - 完整聊天接口：`https://example.com/v1/chat/completions`
 
-自动获取的模型列表、手动输入的模型 ID 及当前选择都会按提供商保存在 `data/models_config.json`。示例结构见
+自动获取的模型列表、手动输入的模型 ID 及当前选择都会按提供商保存在用户数据目录的 `models_config.json`。示例结构见
 `models_config.example.json`。
 
 ## 开发文档
 
+- [源码调试与 Windows 构建](docs/development.md)
 - [项目架构](docs/architecture.md)
 - [Roadmap](docs/roadmap.md)
 - 项目协作约定见根目录 `AGENTS.md`

@@ -3,8 +3,9 @@ import json
 import os
 import time
 from core.languages import LANGUAGES
+from app_paths import DATA_DIR
 
-_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+_DATA_DIR = str(DATA_DIR)
 _VOCAB_FILE = os.path.join(_DATA_DIR, "vocabulary.json")
 
 
@@ -63,7 +64,7 @@ class VocabManager:
             self._entries = []
 
     def save(self):
-        os.makedirs(_DATA_DIR, exist_ok=True)
+        os.makedirs(os.path.dirname(_VOCAB_FILE), exist_ok=True)
         with open(_VOCAB_FILE, "w", encoding="utf-8") as f:
             json.dump([e.to_dict() for e in self._entries], f,
                       ensure_ascii=False, indent=2)
