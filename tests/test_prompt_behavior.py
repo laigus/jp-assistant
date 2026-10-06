@@ -6,10 +6,11 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import onnxruntime  # noqa: F401  # Preserve the application's DLL import order.
 from PyQt6.QtWidgets import QApplication, QLabel, QTextBrowser, QTextEdit
 
 from core.prompt_manager import PromptManager
-from ui.main_window import MainWindow
+from ui.main_window import MainWindow, OcrWorker
 
 
 class PromptBehaviorTests(unittest.TestCase):
@@ -48,6 +49,8 @@ class PromptBehaviorTests(unittest.TestCase):
 
         self.assertEqual(target.ocr_text.toPlainText(), "新しい本文")
         self.assertEqual(target.temp_prompt_edit.toPlainText(), "")
+        self.assertEqual(target.status_label.text(), "识别完成")
+        target._play_sound.assert_called_once_with("chime")
 
     def test_analyze_keeps_temp_instruction_for_current_text(self):
         target = self._make_analyze_target("只解释敬语")
@@ -70,6 +73,33 @@ class PromptBehaviorTests(unittest.TestCase):
         MainWindow._on_ocr_done(target, "   ")
 
         self.assertEqual(target.temp_prompt_edit.toPlainText(), "继续保留")
+        self.assertIn("未识别到文字", target.status_label.text())
+        target._play_sound.assert_not_called()
+
+    def test_ocr_exception_is_logged_and_reported(self):
+        engine = Mock()
+        engine.recognize.side_effect = RuntimeError("recognition test failure")
+        worker = OcrWorker(engine, object(), {})
+        error, result = Mock(), Mock()
+        worker.error.connect(error)
+        worker.result_ready.connect(result)
+
+        with self.assertLogs(level="ERROR") as logs:
+            worker.run()
+
+        self.assertIn("OCR recognition failed", logs.output[0])
+        self.assertIn("Traceback", logs.output[0])
+        error.assert_called_once_with("recognition test failure")
+        result.assert_not_called()
+
+    def test_capture_failure_is_distinguished_from_ocr_failure(self):
+        target = self._make_ocr_target("继续保留")
+
+        MainWindow._on_capture_error(target, "capture test failure")
+
+        self.assertEqual(target.status_label.text(), "截图失败: capture test failure")
+        self.assertEqual(target.temp_prompt_edit.toPlainText(), "继续保留")
+        target._play_sound.assert_not_called()
 
     @staticmethod
     def _make_ocr_target(temp_instruction: str):

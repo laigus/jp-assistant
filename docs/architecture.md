@@ -29,7 +29,7 @@ jp-assistant/
 │   └── vocab.py               # 生词本数据
 ├── ui/
 │   ├── main_window.py         # 主窗口与流程编排
-│   ├── screenshot.py          # 全屏框选
+│   ├── screenshot.py          # 全屏框选、显示缩放坐标转换与截图错误信号
 │   ├── result_window.py       # 详情展示与缩放
 │   ├── settings_dialog.py     # 左侧导航、通用设置、统一保存/取消
 │   ├── language_settings_page.py # 按语言的 OCR、音色、语速、Prompt 草稿
@@ -57,12 +57,13 @@ jp-assistant/
 - 音效是内置只读资源，程序启动不向安装目录生成文件。TTS 临时音频保持现有生命周期，结束后清理。
 - `haohao.spec` 收集 Qt、ONNX、OpenCV、WinRT 与 Hugging Face 动态模块，写入应用图标及产品版本；`build_windows.py` 构建后运行 `--self-check`，通过后输出完整发布目录，不修改系统快捷方式。
 - 构建进程只使用 Python 与 Windows 系统目录的 PATH，避免 IDE 中其他工具的同名 ICU/DLL 混入发布包。修改打包依赖后可加 `--clean` 清理分析缓存。
+- `haohao.spec` 在 PyInstaller 6 的隔离 DLL 扫描中将 ONNX Runtime 放到 WinRT 之前，与应用入口保持一致；临时覆盖 `find_binary_dependencies` 仅限 `Analysis`，结束或异常后恢复原函数。升级 PyInstaller 时需核对这个内部接口。
 - 自检模式只检查动态依赖、图标、音效和 Qt 音频初始化，不加载或写入用户数据、不调用在线服务。
 - 全局热键通过 QObject 信号投递到 GUI 线程；退出事件循环时注销热键。
 
 ## 学习流程
 
-1. 主窗口持有学习语言；`ui/screenshot.py` 获取框选区域，OCR Worker 捕获该语言配置。日语默认使用 meikiocr，并传入检测/识别阈值；英语使用 Windows OCR，要求本机安装对应语言组件。Windows 位图、DataWriter 和线程 COM apartment 在结束时释放。
+1. 主窗口持有学习语言；`ui/screenshot.py` 在松开鼠标时固定全局逻辑选区，隐藏覆盖层后等待 50 ms，再按各屏幕的缩放比例转换为 mss 的物理像素，屏幕原点保持 Windows 原生坐标。延迟截图使用可取消的单次定时器，重新框选、取消或关闭窗口时清除待截图区域；截图异常通过信号反馈并记录日志。OCR Worker 捕获该语言配置，识别异常记录日志；非空结果才提示完成并播放提示音，空结果提示重新框选。日语默认使用 meikiocr，并传入检测/识别阈值；英语使用 Windows OCR，要求本机安装对应语言组件。Windows 位图、DataWriter 和线程 COM apartment 在结束时释放。
 2. 用户可修正 OCR 文本，再由 `PromptManager` 按学习语言组装解析 Prompt：没有临时指令时使用该语言的系统 Prompt；有临时指令时只用语言上下文、待解释文本与临时指令，不叠加系统 Prompt。
 3. `GrammarAnalyzer` 按当前提供商调用 Ollama 或 OpenAI 兼容接口，并把流式增量送回界面。
 4. `ui/md_render.py` 把解析结果渲染到主窗口和详情窗口；内容更新时保留详情窗口缩放比例。

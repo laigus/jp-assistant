@@ -27,6 +27,10 @@ uv pip install --python .venv\Scripts\python.exe -r requirements-build.txt
 
 构建进程隔离 PATH，避免 IDE 中其他工具的同名 ICU/DLL 混入发布包；依赖或打包配置变化时可加 `--clean` 清理分析缓存。
 
+`haohao.spec` 在 PyInstaller 6 的隔离 DLL 扫描中将 ONNX Runtime 排在 WinRT 之前，保持与 `main.py` 一致的初始化顺序。此调整临时覆盖内部函数 `find_binary_dependencies`，仅用于 `Analysis`，无论成功或失败都会恢复；升级 PyInstaller 时需检查函数签名及扫描行为，并重新构建验证。
+
+截图回归测试覆盖 100%、125%、150%、200% 缩放、带负坐标的副屏、混合缩放跨屏坐标，以及延迟截图的选区固定、取消和异常反馈。坐标测试使用模拟屏幕，真实混合 DPI 多显示器仍需实机验证。
+
 ## 自检
 
 打包版的 `--self-check` 检查动态 OCR 模块、图标、音效和 Qt 音频初始化，退出码 0 表示通过。此模式不加载或写入用户配置，也不访问模型或语音服务；它不替代实际 OCR、模型请求或朗读验证。

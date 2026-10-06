@@ -2,6 +2,7 @@
 from pathlib import Path
 import sys
 from PyInstaller.utils.hooks import collect_submodules, copy_metadata
+from PyInstaller.building import build_main
 from PyInstaller.utils.win32.versioninfo import (
     VSVersionInfo, FixedFileInfo, StringFileInfo, StringTable, StringStruct, VarFileInfo, VarStruct,
 )
@@ -26,13 +27,27 @@ metadata = []
 for package in ("huggingface-hub", "meikiocr", "onnxruntime", "edge-tts"):
     metadata += copy_metadata(package)
 
-a = Analysis(
-    [str(root / "main.py")], pathex=[str(root)],
-    binaries=[], datas=[(str(root / "assets" / "haohao.ico"), "assets"),
-                        (str(root / "assets" / "sounds"), "assets/sounds")] + metadata,
-    hiddenimports=collect_submodules("winrt") + collect_submodules("huggingface_hub"),
-    hookspath=[], runtime_hooks=[], excludes=[], noarchive=False,
-)
+# Keep ONNX ahead of WinRT in PyInstaller 6's isolated DLL scan, matching main.py.
+# This private API override is scoped to Analysis and restored even on failure.
+original_find_binary_dependencies = build_main.find_binary_dependencies
+
+
+def find_binary_dependencies(binaries, import_packages, symlink_suppression_patterns):
+    packages = sorted(import_packages, key=lambda package: package != "onnxruntime")
+    return original_find_binary_dependencies(binaries, packages, symlink_suppression_patterns)
+
+
+build_main.find_binary_dependencies = find_binary_dependencies
+try:
+    a = Analysis(
+        [str(root / "main.py")], pathex=[str(root)],
+        binaries=[], datas=[(str(root / "assets" / "haohao.ico"), "assets"),
+                            (str(root / "assets" / "sounds"), "assets/sounds")] + metadata,
+        hiddenimports=collect_submodules("winrt") + collect_submodules("huggingface_hub"),
+        hookspath=[], runtime_hooks=[], excludes=[], noarchive=False,
+    )
+finally:
+    build_main.find_binary_dependencies = original_find_binary_dependencies
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name=APP_NAME,
           debug=False, strip=False, upx=False, console=False,

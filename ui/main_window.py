@@ -1,6 +1,7 @@
 """Main window - multilingual learning flow and language-bound background tasks."""
 import os
 import copy
+import logging
 import threading
 
 from PyQt6.QtWidgets import (
@@ -45,6 +46,7 @@ class OcrWorker(QThread):
             text = self.ocr_engine.recognize(self.image, self.profile)
             self.result_ready.emit(text)
         except Exception as e:
+            logging.exception("OCR recognition failed")
             self.error.emit(str(e))
 
 
@@ -369,6 +371,7 @@ class MainWindow(QWidget):
 
     def _connect_signals(self):
         self.screenshot_overlay.region_captured.connect(self._on_region_captured)
+        self.screenshot_overlay.capture_failed.connect(self._on_capture_error)
 
     # ── model management ──
 
@@ -544,14 +547,20 @@ class MainWindow(QWidget):
     @pyqtSlot(str)
     def _on_ocr_done(self, text):
         self.ocr_text.setPlainText(text)
-        if text.strip():
-            self.temp_prompt_edit.clear()
+        if not text.strip():
+            self.status_label.setText("未识别到文字，请重新框选清晰的文本区域")
+            return
+        self.temp_prompt_edit.clear()
         self.status_label.setText("识别完成")
         self._play_sound("chime")
 
     def _deliver(self, token, callback, *args):
         if token == self._context_id:
             callback(*args)
+
+    @pyqtSlot(str)
+    def _on_capture_error(self, err):
+        self.status_label.setText(f"截图失败: {err[:50]}")
 
     @pyqtSlot(str)
     def _on_ocr_error(self, err):
@@ -733,6 +742,7 @@ class MainWindow(QWidget):
         self._result_window.show_at_saved_pos()
 
     def closeEvent(self, event):
+        self.screenshot_overlay.cancel_capture()
         if self._background_busy():
             self._closing = True
             self._context_id += 1
