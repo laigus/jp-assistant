@@ -1,7 +1,10 @@
 """Focused speech-network tests without requests or generated audio files."""
 import asyncio
+import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
+from urllib.parse import urlsplit
 
 import aiohttp
 from edge_tts.constants import VOICE_LIST, WSS_URL
@@ -32,8 +35,15 @@ class TtsNetworkTests(unittest.TestCase):
         with (patch("core.tts.proxy_bypass", return_value=True) as bypass,
               patch("core.tts.getproxies") as proxies):
             self.assertIsNone(_resolve_proxy(WSS_URL))
-            bypass.assert_called_once_with("speech.platform.bing.com")
+            bypass.assert_called_once_with(urlsplit(WSS_URL).hostname)
             proxies.assert_not_called()
+
+    def test_proxy_bypass_uses_the_requested_host_after_endpoint_changes(self):
+        for host in ("speech.platform.bing.com", "api.msedgeservices.com"):
+            with self.subTest(host=host), \
+                    patch("core.tts.proxy_bypass", return_value=True) as bypass:
+                self.assertIsNone(_resolve_proxy(f"wss://{host}/test"))
+                bypass.assert_called_once_with(host)
 
     def test_synthesis_explicitly_passes_proxy_and_keeps_voice_and_rate(self):
         communicate = Mock(save=AsyncMock())
@@ -100,17 +110,78 @@ class TtsNetworkTests(unittest.TestCase):
                 operation.assert_awaited_once()
                 sleep.assert_not_awaited()
 
+    def test_http_rejection_and_handshake_failures_are_not_retried(self):
+        errors = (aiohttp.WSServerHandshakeError(Mock(), (), status=403),
+                  aiohttp.WSServerHandshakeError(Mock(), (), status=502),
+                  aiohttp.ClientResponseError(Mock(), (), status=403))
+        for error in errors:
+            with self.subTest(error=type(error).__name__, status=error.status):
+                operation = AsyncMock(side_effect=error)
+                with patch("core.tts.asyncio.sleep", new_callable=AsyncMock) as sleep:
+                    with self.assertRaises(type(error)) as caught:
+                        asyncio.run(_request_with_retry(operation))
+                self.assertIs(caught.exception, error)
+                operation.assert_awaited_once()
+                sleep.assert_not_awaited()
+
     def test_connection_errors_are_actionable_and_unknown_errors_are_preserved(self):
         cases = (
             (aiohttp.ClientConnectionError("raw host error"), "连接语音服务失败"),
             (TimeoutError(), "连接语音服务超时"),
             (aiohttp.ClientSSLError(None, OSError()), "证书或 TLS"),
             (aiohttp.ClientHttpProxyError(Mock(), (), status=407), "代理认证失败"),
+            (aiohttp.WSServerHandshakeError(Mock(), (), status=403), "HTTP 403"),
+            (aiohttp.ClientResponseError(Mock(), (), status=403), "更新程序"),
+            (aiohttp.WSServerHandshakeError(Mock(), (), status=502), "握手失败（HTTP 502）"),
             (ValueError("invalid voice"), "invalid voice"),
         )
         for error, expected in cases:
             with self.subTest(error=type(error).__name__):
                 self.assertIn(expected, tts_error_message(error))
+
+
+class TtsFeedbackTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        import onnxruntime  # noqa: F401  # Preserve the application's DLL import order.
+        from PyQt6.QtWidgets import QApplication
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_main_window_preserves_complete_speech_error(self):
+        from PyQt6.QtWidgets import QLabel, QPushButton
+        from ui.main_window import MainWindow
+        target = SimpleNamespace(speak_btn=QPushButton(), status_label=QLabel(),
+                                 _set_speaking=Mock())
+        target.speak_btn.setEnabled(False)
+        message = "语音服务拒绝请求（HTTP 403），请更新程序，并检查系统时间和网络策略。更多错误信息。"
+        self.assertGreater(len(message), 40)
+
+        MainWindow._on_tts_error(target, message)
+
+        self.assertEqual(target.status_label.text(), f"语音合成失败: {message}")
+        self.assertTrue(target.speak_btn.isEnabled())
+        target._set_speaking.assert_called_once_with(False)
+
+    def test_workers_log_original_failure_and_emit_shared_message(self):
+        from ui.tts_worker import TtsWorker, VoiceListWorker
+        failure = aiohttp.WSServerHandshakeError(Mock(), (), status=403)
+        tts = Mock()
+        tts.speak.side_effect = failure
+        cases = ((TtsWorker(tts, "Hello", "en-US-JennyNeural"), "Speech synthesis failed"),
+                 (VoiceListWorker(), "Voice list request failed"))
+        for worker, log_message in cases:
+            with self.subTest(worker=type(worker).__name__):
+                error, result = Mock(), Mock()
+                worker.error.connect(error)
+                worker.result_ready.connect(result)
+                with (patch("ui.tts_worker.TextToSpeech.list_voices", side_effect=failure),
+                      self.assertLogs(level="ERROR") as logs):
+                    worker.run()
+                self.assertIn(log_message, logs.output[0])
+                self.assertIn("Traceback", logs.output[0])
+                error.assert_called_once_with(tts_error_message(failure))
+                result.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -1,4 +1,6 @@
 """Workers shared by the main window, settings preview and vocabulary book."""
+import logging
+
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.tts import TextToSpeech, tts_error_message
@@ -19,6 +21,7 @@ class TtsWorker(QThread):
         try:
             self.result_ready.emit(self.tts.speak(self.text, self.voice, self.rate))
         except Exception as exc:
+            logging.exception("Speech synthesis failed")
             self.error.emit(tts_error_message(exc))
 
 
@@ -30,4 +33,5 @@ class VoiceListWorker(QThread):
         try:
             self.result_ready.emit(TextToSpeech.list_voices())
         except Exception as exc:
+            logging.exception("Voice list request failed")
             self.error.emit(tts_error_message(exc))

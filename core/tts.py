@@ -32,6 +32,10 @@ def tts_error_message(error: Exception) -> str:
         return "连接语音服务超时，请检查网络或系统代理后重试。"
     if isinstance(error, aiohttp.ClientHttpProxyError) and error.status == 407:
         return "代理认证失败，请检查系统代理的账号和密码。"
+    if isinstance(error, aiohttp.ClientResponseError) and error.status == 403:
+        return "语音服务拒绝请求（HTTP 403），请更新程序，并检查系统时间和网络策略。"
+    if isinstance(error, aiohttp.WSServerHandshakeError):
+        return f"语音连接握手失败（HTTP {error.status}），请检查服务状态和系统代理。"
     if isinstance(error, aiohttp.ClientConnectionError):
         return "连接语音服务失败，请检查网络和代理设置，稍后重试。"
     return str(error)

@@ -204,6 +204,7 @@ class MainWindow(QWidget):
 
         self.status_label = QLabel("就绪")
         self.status_label.setObjectName("statusLabel")
+        self.status_label.setWordWrap(True)
         title_bar.addWidget(self.status_label)
 
         self._settings_btn = QPushButton()
@@ -668,7 +669,7 @@ class MainWindow(QWidget):
     def _on_tts_error(self, err):
         self.speak_btn.setEnabled(True)
         self._set_speaking(False)
-        self.status_label.setText(f"语音合成失败: {err[:40]}")
+        self.status_label.setText(f"语音合成失败: {err}")
 
     def _on_tts_done(self, filepath, cache_key=None):
         if cache_key:
